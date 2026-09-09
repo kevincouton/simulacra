@@ -1,0 +1,9 @@
+[package]
+name = "simulacra-env"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Synthetic environment and verifier synthesis"
+
+[dependencies]
+simulacra-agents = { version = "0.1.0", path = "../agents" }

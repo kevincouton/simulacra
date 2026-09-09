@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/agents",
+    "crates/env",
+    "crates/engine",
+    "crates/demo",
+    "crates/tracker",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+lto = true

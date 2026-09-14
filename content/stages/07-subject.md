@@ -15,8 +15,27 @@ demand. That's the layer Simile is replacing.
   inconsistency, and causal texture, and reports early scaling laws for
   simulation quality. The hurdle: frontier models are trained toward being
   *agent* models, which makes them bad simulations of real people.
-- **SimGym** (Shopify) — simulating shopper trajectories.
+- **SimGym** (Shopify) — simulating shopper trajectories; the follow-up
+  ("2,000 robots walk into a shop", Feb 2026) validated real serving
+  optimizations — partitioning, speculative decoding — from simulated
+  shoppers alone.
 - **Tencent's billion-persona approach** — the crude end of the spectrum.
 
-The focus group, the user study, and the A/B test panel are becoming
-inference workloads.
+Mid-2026 was the stage's money quarter:
+
+- **Simile's valuation went vertical** — $100M Series A (Feb 2026) to a $2B
+  valuation by July 2026 (Greenoaks-led Series B, ~20x in five months,
+  revenue up 5x). Synthetic subjects became an enterprise budget line.
+- **The competitor split** — Simile requires real interviews to calibrate
+  each twin; rivals (e.g. Minds) generate personas from descriptions alone,
+  trading fidelity for instant availability on any audience.
+- **SimAB** (arXiv, March 2026) — reframes A/B testing as fast,
+  privacy-preserving simulation with persona-conditioned agents.
+- **Delegation, not just measurement** — Habermolt sends AI representatives
+  into public deliberation standing in for humans; Moltbook is a
+  Reddit-style platform populated entirely by autonomous agents with humans
+  only observing. The subject is simulated even when nobody asked a
+  question.
+
+The focus group, the user study, the A/B panel — and now the town hall —
+are becoming inference workloads.

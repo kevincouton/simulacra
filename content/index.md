@@ -16,6 +16,10 @@ model. The remaining human roles narrow as the loop closes on itself.
 - [Stage 6 — The environment](06-environment.html) — RL worlds get synthesized (2026)
 - [Stage 7 — The human subject](07-subject.html) — simulated people, simulated panels (2025)
 - [Stage 8 — The physical world](08-physical.html) — the part that can't be synthesized (2026, in progress)
+- [Where simulation breaks](09-limits.html) — the 2026 skeptical correction (variance, tails, lived experience)
+
+*Updated September 2026: stages 5–7 refreshed with mid-year developments;
+new page on the limits literature.*
 
 This tracker ships with **Simulacra**, a Rust workspace that prototypes the
 pipeline: synthesized environments, synthesized binary verifiers with

@@ -15,4 +15,17 @@ and humans can't hand-build them fast enough.
 - **Ornith-1.5** — claimed end-to-end self-improvement: the model proposes
   its own tasks and generates its own RL rollouts.
 
-The gym, the referee, and the scoreboard are all models now.
+By mid-2026 the GLM-5.3 recipe had been productized and open-sourced:
+
+- **Agent World Model (AWM)** (Snowflake, open source) — generates 1,000
+  SQL-backed executable environments for agentic RL with benchmark-winning
+  results; environment synthesis is now an arXiv subfield in its own right.
+- **Harness-native training pipelines** — five-stage synthesis (propose →
+  build → judge-agent solvability → verify → train) built on agent SDKs such
+  as Claude's, with a frontier model as the backbone of every module.
+- **Verifier-in-the-loop** — the LLM–verifier interface is now formal enough
+  to anchor a summer school (FoPSS 2026), covering generate–verify–retry
+  loops and binary-reward reliability.
+
+The gym, the referee, and the scoreboard are all models now — and the
+referee is getting its own theory.

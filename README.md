@@ -21,6 +21,7 @@ ambitious human simulation, 10% worse but 100x cheaper and 10,000x faster.
 cargo test --workspace          # all tests
 cargo doc --workspace --no-deps # docs
 cargo run -p simulacra-demo     # town playground
+cargo run -p simulacra-demo -- variance  # distributional-fidelity experiment
 cargo run -p simulacra-tracker  # builds site into site/dist
 ```
 

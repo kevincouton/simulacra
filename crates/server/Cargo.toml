@@ -8,3 +8,4 @@ description = "HTTP server exposing the playground simulations as JSON, plus the
 [dependencies]
 simulacra-agents = { version = "0.1.0", path = "../agents" }
 simulacra-engine = { version = "0.1.0", path = "../engine" }
+simulacra-tracker = { version = "0.1.0", path = "../tracker" }

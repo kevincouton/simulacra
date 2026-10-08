@@ -29,3 +29,43 @@ This tracker ships with **Simulacra**, a Rust workspace that prototypes the
 pipeline: synthesized environments, synthesized binary verifiers with
 oracle/no-op/unsolved stress tests, heuristic agent personas behind an LLM
 provider trait, and a simulated-town playground demo.
+
+## FAQ
+
+### What is synthetic human simulation?
+
+The trend of replacing each human role in the AI training loop — judge,
+data labeler, teacher, curriculum designer, researcher, environment
+builder, and research subject — with a model. Synthetic data, synthetic
+rubrics, AI researchers, and end-to-end RL environments are all instances
+of the same idea: simulation that is roughly 10% worse than the human
+original but 100x cheaper and 10,000x faster.
+
+### What are the stages of the synthetic simulation stack?
+
+Eight stages, in the order they were automated: (1) the reward signal —
+RLHF reward models and LLM judges; (2) the training data — Phi-style
+synthetic corpora; (3) the teacher — model distillation; (4) the
+curriculum — self-instructing models; (5) the researcher — autonomous
+experiment loops like Karpathy's autoresearch; (6) the environment —
+synthesized RL worlds with synthesized verifiers; (7) the human subject —
+digital twins of real people for surveys and A/B tests; (8) the physical
+world — the one layer that resists full synthesis.
+
+### Where does synthetic simulation break?
+
+Independent evaluations converge on one finding: simulated populations
+track average responses well but fail on variance, price sensitivity, and
+distribution tails, and they break on lived experience and emotional
+nuance. Simulation quality is a measured quantity — like the synthesized
+verifiers it depends on, a simulator must be stress-tested against ground
+truth before anyone acts on its output.
+
+### What is Simulacra?
+
+Simulacra is an open-source Rust workspace that prototypes the pipeline:
+seeded environment synthesis, constraint-based binary verifier synthesis
+with oracle/no-op/unsolved stress tests, heuristic agent personas behind
+an LLM provider trait, a Synthesizer/Solver co-evolution loop, a
+gossip-based social layer, and distributional-fidelity experiments that
+check simulated populations against theory.

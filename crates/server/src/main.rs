@@ -1,16 +1,17 @@
-//! HTTP server for the Simulacra playground.
+//! HTTP server for the Simulacra playground and research tracker.
 //!
-//! Serves a small JSON API over the simulation engine and, when built,
-//! the Nuxt web UI from `web/.output/public`:
+//! Route map:
 //!
-//! - `GET /api/town?seed=42` — one town run with the demo persona cast
-//! - `GET /api/variance?seed=42` — the distributional-fidelity experiment
-//! - `GET /api/coevolution?seed=42` — rounds of the Synthesizer/Solver game
-//! - `GET /api/gossip?seed=42` — hidden-location runs with and without gossip
-//! - anything else — static files from `web/.output/public` (404 if absent)
+//! - `/` and `/*.html`, `sitemap.xml`, `robots.txt`, `style.css` — the
+//!   SEO/AEO research tracker (rebuilt from `content/` at startup)
+//! - `/api/town?seed=42` — one town run with the demo persona cast
+//! - `/api/variance?seed=42` — the distributional-fidelity experiment
+//! - `/api/coevolution?seed=42` — rounds of the Synthesizer/Solver game
+//! - `/api/gossip?seed=42` — hidden-location runs with and without gossip
+//! - `/app/*` — the Nuxt playground UI from `web/.output/public`
 //!
 //! Single-threaded and std-only; it is a playground server, not a
-//! production one. Default bind: `127.0.0.1:8787` (override with
+//! production one. Default bind: `127.0.0.1:31011` (override with
 //! `SIMULACRA_BIND`).
 
 use std::cell::RefCell;
@@ -23,8 +24,14 @@ use simulacra_agents::{ExplorerPersona, GossipBook, GossipingPersona, OraclePers
 use simulacra_engine::{CoEvolution, Simulation, VarianceExperiment};
 
 fn main() {
-    let bind = std::env::var("SIMULACRA_BIND").unwrap_or_else(|_| "127.0.0.1:8787".into());
+    let bind = std::env::var("SIMULACRA_BIND").unwrap_or_else(|_| "127.0.0.1:31011".into());
     let root = workspace_root();
+    // Rebuild the research tracker from content at startup so the served
+    // HTML is always current.
+    if let Err(e) = simulacra_tracker::build_site(&root.join("content"), &root.join("site").join("dist")) {
+        eprintln!("tracker rebuild failed: {e}");
+        std::process::exit(1);
+    }
     let listener = match TcpListener::bind(&bind) {
         Ok(l) => l,
         Err(e) => {
@@ -32,7 +39,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("simulacra server on http://{bind} (web root: {})", root.join("web/.output/public").display());
+    println!("simulacra server on http://{bind} (tracker + /app/ UI + /api/)");
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
@@ -49,8 +56,15 @@ fn workspace_root() -> PathBuf {
     if let Ok(root) = std::env::var("SIMULACRA_ROOT") {
         return PathBuf::from(root);
     }
+    // Walk up from the executable looking for the workspace Cargo.toml,
+    // so installed binaries (/usr/local/bin) work when run from the repo.
     let exe = std::env::current_exe().expect("cannot locate executable");
-    exe.ancestors().nth(3).expect("cannot locate workspace root").to_path_buf()
+    for anc in exe.ancestors() {
+        if anc.join("Cargo.toml").is_file() {
+            return anc.to_path_buf();
+        }
+    }
+    panic!("cannot locate workspace root — set SIMULACRA_ROOT");
 }
 
 fn handle(mut stream: TcpStream, root: &std::path::Path) -> std::io::Result<()> {
@@ -103,30 +117,38 @@ fn respond(stream: &mut TcpStream, status: u16, content_type: &str, body: &str) 
     stream.write_all(body.as_bytes())
 }
 
+/// Map a URL path to a file under either the web UI (`web/.output/public`,
+/// under `/app/`) or the research tracker (`site/dist`, the default),
+/// with a traversal guard.
 fn serve_static(stream: &mut TcpStream, root: &std::path::Path, url_path: &str) -> std::io::Result<()> {
-    let web_root = root.join("web").join(".output").join("public");
-    let rel = url_path.trim_start_matches('/');
+    let (base, rel) = if let Some(rest) = url_path.strip_prefix("/app") {
+        (root.join("web").join(".output").join("public"), rest.trim_start_matches('/'))
+    } else {
+        (root.join("site").join("dist"), url_path.trim_start_matches('/'))
+    };
     let rel = if rel.is_empty() { "index.html" } else { rel };
-    let file = web_root.join(rel);
+    let file = base.join(rel);
     // Guard against path traversal.
     let canonical = file.canonicalize();
     let canonical = match canonical {
-        Ok(c) if c.starts_with(&web_root) => c,
+        Ok(c) if c.starts_with(&base) => c,
         _ => return respond(stream, 404, "text/plain", "not found"),
     };
     match std::fs::read(&canonical) {
         Ok(bytes) => {
-            let ctype = if canonical.extension().is_some_and(|e| e == "css") {
-                "text/css"
-            } else if canonical.extension().is_some_and(|e| e == "js") {
-                "application/javascript"
-            } else {
-                "text/html"
+            let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let ctype = match ext {
+                "css" => "text/css",
+                "js" => "application/javascript",
+                "xml" => "application/xml",
+                "txt" => "text/plain",
+                "svg" => "image/svg+xml",
+                _ => "text/html",
             };
             let body = String::from_utf8_lossy(&bytes).into_owned();
             respond(stream, 200, ctype, &body)
         }
-        Err(_) => respond(stream, 404, "text/plain", "web UI not built — run `npx nuxi build` in web/ (or start the server after building)"),
+        Err(_) => respond(stream, 404, "text/plain", "not found"),
     }
 }
 

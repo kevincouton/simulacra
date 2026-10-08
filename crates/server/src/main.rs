@@ -8,6 +8,10 @@
 //! - `/api/variance?seed=42` — the distributional-fidelity experiment
 //! - `/api/coevolution?seed=42` — rounds of the Synthesizer/Solver game
 //! - `/api/gossip?seed=42` — hidden-location runs with and without gossip
+//! - `POST /mcp` — MCP (Model Context Protocol) JSON-RPC endpoint exposing
+//!   the experiments as tools (stateless streamable HTTP)
+//! - `GET /.well-known/agent.json`, `GET /a2a/agent.json` — the A2A agent
+//!   card; `POST /a2a/` — A2A (Agent2Agent) JSON-RPC endpoint
 //! - `/app/*` — the Nuxt playground UI from `web/.output/public`
 //!
 //! Single-threaded and std-only; it is a playground server, not a
@@ -18,10 +22,11 @@ use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::rc::Rc;
 
-use simulacra_agents::{ExplorerPersona, GossipBook, GossipingPersona, OraclePersona, Persona, ShopperPersona};
-use simulacra_engine::{CoEvolution, Simulation, VarianceExperiment};
+mod a2a;
+mod json;
+mod mcp;
+mod sim;
 
 fn main() {
     let bind = std::env::var("SIMULACRA_BIND").unwrap_or_else(|_| "127.0.0.1:31011".into());
@@ -32,6 +37,7 @@ fn main() {
         eprintln!("tracker rebuild failed: {e}");
         std::process::exit(1);
     }
+    let store = a2a::Store::new();
     let listener = match TcpListener::bind(&bind) {
         Ok(l) => l,
         Err(e) => {
@@ -39,11 +45,13 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("simulacra server on http://{bind} (tracker + /app/ UI + /api/)");
+    println!(
+        "simulacra server on http://{bind} (tracker + /app/ UI + /api/ + /mcp + /a2a/)"
+    );
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
-                if let Err(e) = handle(s, &root) {
+                if let Err(e) = handle(s, &root, &store) {
                     eprintln!("request error: {e}");
                 }
             }
@@ -52,7 +60,9 @@ fn main() {
     }
 }
 
-fn workspace_root() -> PathBuf {
+/// Locate the workspace root. Submodules and tests use this to find
+/// `content/` regardless of the current directory.
+pub fn workspace_root() -> PathBuf {
     if let Ok(root) = std::env::var("SIMULACRA_ROOT") {
         return PathBuf::from(root);
     }
@@ -67,50 +77,117 @@ fn workspace_root() -> PathBuf {
     panic!("cannot locate workspace root — set SIMULACRA_ROOT");
 }
 
-fn handle(mut stream: TcpStream, root: &std::path::Path) -> std::io::Result<()> {
-    let mut buf = [0u8; 8192];
-    let n = stream.read(&mut buf)?;
-    let request = String::from_utf8_lossy(&buf[..n]);
-    let Some(line) = request.lines().next() else {
-        return respond(&mut stream, 400, "text/plain", "bad request");
+/// Escape a string for embedding inside a JSON string literal (no quotes).
+pub fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+fn handle(mut stream: TcpStream, root: &std::path::Path, store: &RefCell<a2a::Store>) -> std::io::Result<()> {
+    let Some((method, target, body)) = read_request(&mut stream)? else {
+        return respond(&mut stream, 400, "text/plain", "bad request", "");
     };
-    let mut parts = line.split_whitespace();
-    let method = parts.next().unwrap_or("");
-    let target = parts.next().unwrap_or("/");
-    if method != "GET" {
-        return respond(&mut stream, 405, "text/plain", "method not allowed");
-    }
 
     let (path, query) = match target.split_once('?') {
         Some((p, q)) => (p, q),
-        None => (target, ""),
+        None => (target.as_str(), ""),
     };
     let seed = query
         .split('&')
         .find_map(|kv| kv.strip_prefix("seed="))
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(42);
+        .unwrap_or(sim::DEFAULT_SEED);
 
-    match path {
-        "/api/town" => respond(&mut stream, 200, "application/json", &api_town(seed)),
-        "/api/variance" => respond(&mut stream, 200, "application/json", &api_variance(seed)),
-        "/api/coevolution" => respond(&mut stream, 200, "application/json", &api_coevolution(seed)),
-        "/api/gossip" => respond(&mut stream, 200, "application/json", &api_gossip(seed)),
-        "/healthz" => respond(&mut stream, 200, "text/plain", "ok"),
-        other => serve_static(&mut stream, root, other),
+    const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type, mcp-session-id\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+    match (method.as_str(), path) {
+        ("GET", "/api/town") => respond(&mut stream, 200, "application/json", &sim::run_town(seed), ""),
+        ("GET", "/api/variance") => respond(&mut stream, 200, "application/json", &sim::run_variance(seed), ""),
+        ("GET", "/api/coevolution") => respond(&mut stream, 200, "application/json", &sim::run_coevolution(seed), ""),
+        ("GET", "/api/gossip") => respond(&mut stream, 200, "application/json", &sim::run_gossip(seed), ""),
+        ("POST", "/mcp") => respond(&mut stream, 200, "application/json", &mcp::handle(root, &body), CORS),
+        ("POST", "/a2a") | ("POST", "/a2a/") => {
+            respond(&mut stream, 200, "application/json", &a2a::handle(root, store, &body), CORS)
+        }
+        ("OPTIONS", "/mcp") | ("OPTIONS", "/a2a") | ("OPTIONS", "/a2a/") => {
+            respond(&mut stream, 204, "text/plain", "", CORS)
+        }
+        ("GET", "/.well-known/agent.json") | ("GET", "/a2a/agent.json") => {
+            respond(&mut stream, 200, "application/json", &a2a::agent_card(), CORS)
+        }
+        ("GET", "/healthz") => respond(&mut stream, 200, "text/plain", "ok", ""),
+        ("GET", _) => serve_static(&mut stream, root, path),
+        _ => respond(&mut stream, 405, "text/plain", "method not allowed", ""),
     }
 }
 
-fn respond(stream: &mut TcpStream, status: u16, content_type: &str, body: &str) -> std::io::Result<()> {
+/// Read one HTTP request: headers up to `\r\n\r\n`, then the body per
+/// Content-Length. Returns `Ok(None)` on a malformed or over-long request.
+fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<(String, String, String)>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 8192];
+    let header_end = loop {
+        let n = stream.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(pos) = find(&buf, b"\r\n\r\n") {
+            break pos + 4;
+        }
+        if buf.len() > 65_536 {
+            return Ok(None);
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+    let mut lines = head.lines();
+    let request_line = lines.next().unwrap_or("").to_string();
+    let content_length = lines
+        .filter_map(|l| l.split_once(':'))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    while buf.len() < header_end + content_length {
+        let n = stream.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.len() > 1_000_000 {
+            return Ok(None);
+        }
+    }
+    let end = (header_end + content_length).min(buf.len());
+    let body = String::from_utf8_lossy(&buf[header_end..end]).into_owned();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_string();
+    let target = parts.next().unwrap_or("/").to_string();
+    Ok(Some((method, target, body)))
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn respond(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &str,
+    extra_headers: &str,
+) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
         _ => "Error",
     };
     let head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{extra_headers}Connection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes())?;
@@ -132,7 +209,7 @@ fn serve_static(stream: &mut TcpStream, root: &std::path::Path, url_path: &str) 
     let canonical = file.canonicalize();
     let canonical = match canonical {
         Ok(c) if c.starts_with(&base) => c,
-        _ => return respond(stream, 404, "text/plain", "not found"),
+        _ => return respond(stream, 404, "text/plain", "not found", ""),
     };
     match std::fs::read(&canonical) {
         Ok(bytes) => {
@@ -146,133 +223,8 @@ fn serve_static(stream: &mut TcpStream, root: &std::path::Path, url_path: &str) 
                 _ => "text/html",
             };
             let body = String::from_utf8_lossy(&bytes).into_owned();
-            respond(stream, 200, ctype, &body)
+            respond(stream, 200, ctype, &body, "")
         }
-        Err(_) => respond(stream, 404, "text/plain", "not found"),
+        Err(_) => respond(stream, 404, "text/plain", "not found", ""),
     }
-}
-
-fn demo_cast() -> Vec<Box<dyn Persona>> {
-    vec![
-        Box::new(ShopperPersona::new("careful-clara", 0.95, 0.05)),
-        Box::new(ShopperPersona::new("distracted-dan", 0.60, 0.20)),
-        Box::new(ShopperPersona::new("lazy-lou", 0.50, 0.50)),
-        Box::new(OraclePersona),
-    ]
-}
-
-fn as_refs(cast: &[Box<dyn Persona>]) -> Vec<&dyn Persona> {
-    cast.iter().map(|p| p.as_ref()).collect()
-}
-
-fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn api_town(seed: u64) -> String {
-    let cast = demo_cast();
-    let refs = as_refs(&cast);
-    let report = Simulation::seeded(seed).run_town(5, &refs).unwrap();
-    let results: String = report
-        .results()
-        .iter()
-        .map(|r| {
-            let violations: String = r
-                .violations
-                .iter()
-                .map(|v| format!("\"{}\"", esc(v)))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!(
-                "{{\"agent\":\"{}\",\"world_id\":{},\"task\":\"{}\",\"reward\":{},\"violations\":[{}]}}",
-                esc(&r.agent),
-                r.world_id,
-                esc(&r.task),
-                r.reward,
-                violations
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "{{\"seed\":{seed},\"results\":[{}],\"success_rate\":{:.4},\"total_reward\":{:.1}}}",
-        results,
-        report.success_rate(),
-        report.total_reward()
-    )
-}
-
-fn api_variance(seed: u64) -> String {
-    let report = VarianceExperiment::new(seed, 30, 20, 4).run().unwrap();
-    let rates: String = report
-        .per_run_rates
-        .iter()
-        .map(|r| format!("{r:.4}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "{{\"seed\":{seed},\"per_run_rates\":[{}],\"empirical_mean\":{:.4},\"theoretical_mean\":{:.4},\"empirical_variance\":{:.5},\"theoretical_variance\":{:.5},\"mean_match\":{},\"variance_match\":{}}}",
-        rates,
-        report.empirical_mean,
-        report.theoretical_mean,
-        report.empirical_variance,
-        report.theoretical_variance,
-        report.mean_match,
-        report.variance_match
-    )
-}
-
-fn api_coevolution(seed: u64) -> String {
-    let personas = vec![
-        ShopperPersona::new("careful-clara", 0.95, 0.05),
-        ShopperPersona::new("distracted-dan", 0.60, 0.20),
-        ShopperPersona::new("lazy-lou", 0.50, 0.50),
-        ShopperPersona::new("steady-sue", 0.80, 0.10),
-        ShopperPersona::new("hasty-hank", 0.70, 0.30),
-        ShopperPersona::new("dreamy-dora", 0.55, 0.35),
-    ];
-    let refs: Vec<&dyn Persona> = personas.iter().map(|p| p as &dyn Persona).collect();
-    let report = CoEvolution::seeded(seed).run(&refs, 8).unwrap();
-    let rounds: String = report
-        .rounds
-        .iter()
-        .map(|r| {
-            format!(
-                "{{\"round\":{},\"n_shops\":{},\"items_per_shop\":{},\"success_rate\":{:.4}}}",
-                r.round, r.n_shops, r.items_per_shop, r.success_rate
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{{\"seed\":{seed},\"rounds\":[{}]}}", rounds)
-}
-
-fn api_gossip(seed: u64) -> String {
-    let mk = |trust: f64, book: Rc<RefCell<GossipBook>>| -> Vec<Box<dyn Persona>> {
-        (0..6)
-            .map(|i| {
-                let base = ExplorerPersona::new(format!("explorer-{i}"), 0.1);
-                if trust > 0.0 {
-                    Box::new(GossipingPersona::new(base, book.clone(), trust)) as Box<dyn Persona>
-                } else {
-                    Box::new(base) as Box<dyn Persona>
-                }
-            })
-            .collect()
-    };
-    let control_book = Rc::new(RefCell::new(GossipBook::default()));
-    let plain = mk(0.0, control_book.clone());
-    let plain_refs = as_refs(&plain);
-    let without = Simulation::seeded(seed).run_town_hidden(4, &plain_refs, &control_book).unwrap();
-
-    let book = Rc::new(RefCell::new(GossipBook::default()));
-    let wired = mk(0.9, book.clone());
-    let wired_refs = as_refs(&wired);
-    let with = Simulation::seeded(seed).run_town_hidden(4, &wired_refs, &book).unwrap();
-
-    format!(
-        "{{\"seed\":{seed},\"no_gossip_rate\":{:.4},\"gossip_rate\":{:.4}}}",
-        without.success_rate(),
-        with.success_rate()
-    )
 }

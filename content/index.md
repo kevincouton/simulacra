@@ -69,3 +69,13 @@ with oracle/no-op/unsolved stress tests, heuristic agent personas behind
 an LLM provider trait, a Synthesizer/Solver co-evolution loop, a
 gossip-based social layer, and distributional-fidelity experiments that
 check simulated populations against theory.
+
+### Does Simulacra expose machine-readable endpoints?
+
+Yes. The same Rust server exposes the experiments as an MCP tool server at
+`/mcp` (tools: run_town, run_variance, run_coevolution, run_gossip,
+list_stages, get_stage), as an A2A agent whose card lives at
+`/.well-known/agent.json` with the JSON-RPC endpoint at `/a2a/`, and as
+plain JSON under `/api/`. All endpoints are public, unauthenticated, and
+seeded, so every result is reproducible. See the
+[Agents & API](agents.html) page.

@@ -49,6 +49,10 @@ pub const FAQ: &[FaqEntry] = &[
         q: "What is Simulacra?",
         a: "Simulacra is an open-source Rust workspace that prototypes the pipeline: seeded environment synthesis, constraint-based binary verifier synthesis with oracle/no-op/unsolved stress tests, heuristic agent personas behind an LLM provider trait, a Synthesizer/Solver co-evolution loop, a gossip-based social layer, and distributional-fidelity experiments that check simulated populations against theory.",
     },
+    FaqEntry {
+        q: "Does Simulacra expose machine-readable endpoints?",
+        a: "Yes. The same Rust server exposes the experiments as an MCP tool server at /mcp (tools: run_town, run_variance, run_coevolution, run_gossip, list_stages, get_stage), as an A2A agent whose card lives at /.well-known/agent.json with the JSON-RPC endpoint at /a2a/, and as plain JSON under /api/. All endpoints are public, unauthenticated, and seeded, so every result is reproducible. See the Agents & API page.",
+    },
 ];
 
 /// One source page: where it came from and where it lands in `site/dist`.
@@ -76,6 +80,14 @@ pub fn build_site(content_dir: &Path, output_dir: &Path) -> Result<Vec<PathBuf>,
     }
 
     let mut pages = vec![load_page(index, "index".into(), "index.html".into())?];
+
+    // Optional top-level pages rendered after the index and before stages.
+    for (file, slug, output) in [("agents.md", "agents", "agents.html")] {
+        let path = content_dir.join(file);
+        if path.is_file() {
+            pages.push(load_page(path, slug.into(), output.into())?);
+        }
+    }
 
     let mut stage_files: Vec<_> = fs::read_dir(&stages_dir)
         .map_err(|e| format!("reading {}: {e}", stages_dir.display()))?
@@ -109,6 +121,9 @@ pub fn build_site(content_dir: &Path, output_dir: &Path) -> Result<Vec<PathBuf>,
     fs::write(output_dir.join("robots.txt"), render_robots())
         .map_err(|e| format!("writing robots.txt: {e}"))?;
     written.push(output_dir.join("robots.txt"));
+    fs::write(output_dir.join("llms.txt"), render_llms_txt(&pages))
+        .map_err(|e| format!("writing llms.txt: {e}"))?;
+    written.push(output_dir.join("llms.txt"));
     Ok(written)
 }
 
@@ -310,6 +325,37 @@ fn render_robots() -> String {
     format!("User-agent: *\nAllow: /\n\nSitemap: {BASE_URL}/sitemap.xml\n")
 }
 
+/// `llms.txt` (llmstxt.org): a machine-readable summary of the site for LLM
+/// agents — pages, endpoints, and how to call them.
+fn render_llms_txt(pages: &[Page]) -> String {
+    let listing: String = pages
+        .iter()
+        .map(|p| format!("- [{}]({}): {}", p.nav_title, canonical(&p.slug), p.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        concat!(
+            "# Simulacra — The Synthetic Simulation Stack\n\n",
+            "> Research tracker and open-source Rust playground for synthetic human simulation:\n",
+            "> replacing each human role in the AI training loop — judge, data labeler, teacher,\n",
+            "> curriculum designer, researcher, environment builder, and research subject —\n",
+            "> with a model. Simulation that is roughly 10% worse than the human original but\n",
+            "> 100x cheaper and 10,000x faster.\n\n",
+            "## Pages\n\n{listing}\n\n",
+            "## Machine-readable endpoints (public, unauthenticated, seeded/reproducible)\n\n",
+            "- MCP tool server: `POST {base}/mcp` (JSON-RPC 2.0, stateless streamable HTTP).\n",
+            "  Tools: run_town, run_variance, run_coevolution, run_gossip (optional `seed`),\n",
+            "  list_stages, get_stage.\n",
+            "- A2A agent card: `{base}/.well-known/agent.json` (also `/a2a/agent.json`);\n",
+            "  endpoint `POST {base}/a2a/` (`message/send`, `tasks/get`).\n",
+            "- JSON API: `{base}/api/town|variance|coevolution|gossip?seed=N`.\n",
+            "- Playground UI: {base}/app/\n"
+        ),
+        listing = listing,
+        base = BASE_URL,
+    )
+}
+
 const STYLE_CSS: &str = "body { font-family: system-ui, sans-serif; max-width: 44rem; \
 margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #1a1a2e; }
 nav ul { display: flex; flex-wrap: wrap; gap: .5rem; list-style: none; padding: 0; }
@@ -340,8 +386,8 @@ mod tests {
         fixture(&tmp);
         let out = tmp.join("dist");
         let written = build_site(&tmp, &out).expect("build failed");
-        // style.css + index + 2 stages + sitemap + robots
-        assert_eq!(written.len(), 6);
+        // style.css + index + 2 stages + sitemap + robots + llms.txt
+        assert_eq!(written.len(), 7);
 
         let index = fs::read_to_string(out.join("index.html")).unwrap();
         assert!(index.contains("<h1>Overview</h1>"));
@@ -368,6 +414,11 @@ mod tests {
         assert!(sitemap.contains("01-reward.html"));
         let robots = fs::read_to_string(out.join("robots.txt")).unwrap();
         assert!(robots.contains("Sitemap: https://simulation.lucanian.app/sitemap.xml"));
+        let llms = fs::read_to_string(out.join("llms.txt")).unwrap();
+        assert!(llms.contains("# Simulacra — The Synthetic Simulation Stack"));
+        assert!(llms.contains("POST https://simulation.lucanian.app/mcp"));
+        assert!(llms.contains("/.well-known/agent.json"));
+        assert!(llms.contains("[Overview](https://simulation.lucanian.app/)"));
         let _ = fs::remove_dir_all(&tmp);
     }
 

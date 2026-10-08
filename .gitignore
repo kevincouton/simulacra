@@ -3,3 +3,4 @@ site/dist
 web/node_modules
 web/.nuxt
 web/.output
+data/

@@ -26,7 +26,8 @@ The same experiments are also an A2A agent. Its card is published at
 `/.well-known/agent.json` (mirrored at `/a2a/agent.json`); send it a
 natural-language `message/send` at `/a2a/` — "run gossip seed 7" — and it
 replies with a completed Task whose artifacts carry both a human-readable
-summary and the raw JSON result. `tasks/get` retrieves a task by id.
+summary and the raw JSON result. `tasks/get` retrieves a task by id; tasks
+persist across restarts in an append-only JSONL log.
 
 - Agent card: `https://simulation.lucanian.app/.well-known/agent.json`
 - Endpoint: `https://simulation.lucanian.app/a2a/`

@@ -4,11 +4,13 @@
 //! JSON-RPC 2.0 methods: `message/send` maps a natural-language request onto
 //! one of the four experiments and returns a completed `Task` whose
 //! artifacts carry both a human-readable summary and the raw JSON result;
-//! `tasks/get` fetches a previously created task from the in-memory store.
+//! `tasks/get` fetches a previously created task. Tasks persist across
+//! restarts in an append-only JSONL log (see [`Store::open`]).
 //! Streaming is not supported (the card advertises `streaming: false`).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::path::Path;
 
 use crate::json::{self, Json};
@@ -16,16 +18,46 @@ use crate::sim;
 
 pub const PROTOCOL_VERSION: &str = "0.3.0";
 
-/// In-memory task store; the server is single-threaded so a plain
-/// `RefCell` map behind the listener loop is enough.
+/// Task store backed by an append-only JSONL log. The server is
+/// single-threaded, so a `RefCell` map behind the listener loop is enough
+/// for the in-memory index; the log handle is append-only, one task per
+/// line (the serializer escapes newlines, so lines never break).
 pub struct Store {
     tasks: HashMap<String, Json>,
     next_id: u64,
+    log: Option<std::fs::File>,
 }
 
 impl Store {
+    /// In-memory store only (used by tests and as a fallback).
     pub fn new() -> RefCell<Self> {
-        RefCell::new(Self { tasks: HashMap::new(), next_id: 0 })
+        RefCell::new(Self { tasks: HashMap::new(), next_id: 0, log: None })
+    }
+
+    /// Load tasks from `path` (created if missing) and append new ones to
+    /// it. Unreadable or corrupt lines are skipped, and a log that fails
+    /// to open degrades to in-memory-only operation.
+    pub fn open(path: &Path) -> RefCell<Self> {
+        let mut tasks = HashMap::new();
+        let mut next_id = 0u64;
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            for line in contents.lines() {
+                let Ok(task) = json::parse(line) else { continue };
+                let Some(id) = task.get("id").and_then(Json::as_str) else { continue };
+                if let Some(n) = id.strip_prefix("simulacra-task-").and_then(|s| s.parse::<u64>().ok()) {
+                    next_id = next_id.max(n);
+                }
+                tasks.insert(id.to_string(), task);
+            }
+        }
+        let log = match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("a2a task log {} not writable, tasks will not persist: {e}", path.display());
+                None
+            }
+        };
+        RefCell::new(Self { tasks, next_id, log })
     }
 
     /// Store a task, inserting its freshly minted id as the first field.
@@ -34,6 +66,11 @@ impl Store {
         let id = format!("simulacra-task-{}", self.next_id);
         if let Json::Obj(pairs) = &mut task {
             pairs.insert(0, ("id".into(), Json::Str(id.clone())));
+        }
+        if let Some(log) = &mut self.log {
+            if let Err(e) = writeln!(log, "{}", task.to_string()) {
+                eprintln!("a2a task log write failed: {e}");
+            }
         }
         self.tasks.insert(id.clone(), task);
         id
@@ -302,5 +339,62 @@ mod tests {
         assert_eq!(extract_seed("run gossip seed 7"), Some(7));
         assert_eq!(extract_seed("seed=99 run town"), Some(99));
         assert_eq!(extract_seed("no seed here"), None);
+    }
+
+    #[test]
+    fn tasks_persist_across_reopen() {
+        let tmp = std::env::temp_dir().join("simulacra-a2a-persist-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let log = tmp.join("tasks.jsonl");
+
+        let store = Store::open(&log);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"run gossip seed 42"}]}}}"#;
+        let res = json::parse(&handle(&root(), &store, req)).unwrap();
+        let id = res.path(&["result", "id"]).unwrap().as_str().unwrap().to_string();
+        drop(store);
+
+        // Reopen from the log: the task must still be there, and new ids
+        // must not collide with replayed ones.
+        let store = Store::open(&log);
+        let res = json::parse(&handle(
+            &root(),
+            &store,
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tasks/get","params":{{"id":"{id}"}}}}"#),
+        ))
+        .unwrap();
+        assert_eq!(res.path(&["result", "id"]).unwrap().as_str(), Some(id.as_str()));
+
+        let req = r#"{"jsonrpc":"2.0","id":3,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"run town"}]}}}"#;
+        let res = json::parse(&handle(&root(), &store, req)).unwrap();
+        let id2 = res.path(&["result", "id"]).unwrap().as_str().unwrap().to_string();
+        assert_ne!(id, id2);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn corrupt_log_lines_are_skipped() {
+        let tmp = std::env::temp_dir().join("simulacra-a2a-corrupt-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let log = tmp.join("tasks.jsonl");
+        std::fs::write(&log, "not json\n{\"id\":\"simulacra-task-5\",\"kind\":\"task\"}\n").unwrap();
+
+        let store = Store::open(&log);
+        let res = json::parse(&handle(
+            &root(),
+            &store,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tasks/get","params":{"id":"simulacra-task-5"}}"#,
+        ))
+        .unwrap();
+        assert!(res.get("result").is_some());
+
+        // New ids continue after the highest replayed id.
+        let req = r#"{"jsonrpc":"2.0","id":2,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"hi"}]}}}"#;
+        let res = json::parse(&handle(&root(), &store, req)).unwrap();
+        assert_eq!(res.path(&["result", "id"]).unwrap().as_str(), Some("simulacra-task-6"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

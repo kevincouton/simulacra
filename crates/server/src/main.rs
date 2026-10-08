@@ -37,7 +37,16 @@ fn main() {
         eprintln!("tracker rebuild failed: {e}");
         std::process::exit(1);
     }
-    let store = a2a::Store::new();
+    // A2A tasks persist in an append-only JSONL log under data/ so they
+    // survive restarts; fall back to memory if the log cannot be created.
+    let data_dir = root.join("data");
+    let store = match std::fs::create_dir_all(&data_dir) {
+        Ok(()) => a2a::Store::open(&data_dir.join("a2a-tasks.jsonl")),
+        Err(e) => {
+            eprintln!("cannot create {}, tasks will not persist: {e}", data_dir.display());
+            a2a::Store::new()
+        }
+    };
     let listener = match TcpListener::bind(&bind) {
         Ok(l) => l,
         Err(e) => {

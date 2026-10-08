@@ -27,5 +27,19 @@ By mid-2026 the GLM-5.3 recipe had been productized and open-sourced:
   to anchor a summer school (FoPSS 2026), covering generate–verify–retry
   loops and binary-reward reliability.
 
-The gym, the referee, and the scoreboard are all models now — and the
-referee is getting its own theory.
+Late 2026 pushed the stage from "synthesize a gym" to "co-evolve with the
+agent":
+
+- **Agent–environment co-evolution** — world models that co-train with the
+  policy (WebEvolver, DreamGym): the environment adapts to the agent while
+  the agent learns, instead of staying fixed.
+- **General Agent** (Prime Intellect) — synthetic task creation as a
+  two-player game: a Synthesizer agent invents tasks, a Solver attempts
+  them, and the game itself generates the curriculum.
+- **A vendor market appears** — directories of RL-environment vendors
+  (e.g. RL List, Oct 2026) and funded startups selling simulation sandboxes
+  for benchmarking and training agents before deployment. Environment
+  synthesis is a procurement category now, not just a paper topic.
+
+The gym, the referee, and the scoreboard are all models now — the referee
+is getting its own theory, and the gym has started fighting back.

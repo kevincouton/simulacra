@@ -17,9 +17,13 @@ model. The remaining human roles narrow as the loop closes on itself.
 - [Stage 7 — The human subject](07-subject.html) — simulated people, simulated panels (2025)
 - [Stage 8 — The physical world](08-physical.html) — the part that can't be synthesized (2026, in progress)
 - [Where simulation breaks](09-limits.html) — the 2026 skeptical correction (variance, tails, lived experience)
+- [From papers to procurement](10-market.html) — NIH grand challenges, buyer's guides, vendor directories (Sept 2026)
 
-*Updated September 2026: stages 5–7 refreshed with mid-year developments;
-new page on the limits literature.*
+*Updated October 2026: stage 6 extended with co-evolution; new page on
+institutionalization; the playground gained a Synthesizer/Solver
+co-evolution mode, a gossip/social layer, tail-fidelity sampling, a
+feature-gated real LLM adapter, and a web UI served by a small Rust
+server.*
 
 This tracker ships with **Simulacra**, a Rust workspace that prototypes the
 pipeline: synthesized environments, synthesized binary verifiers with

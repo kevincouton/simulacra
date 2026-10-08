@@ -31,5 +31,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "simulacra-server"
+version = "0.1.0"
+dependencies = [
+ "simulacra-agents",
+ "simulacra-engine",
+]
+
+[[package]]
 name = "simulacra-tracker"
 version = "0.1.0"

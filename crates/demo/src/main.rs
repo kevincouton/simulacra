@@ -13,13 +13,24 @@ use simulacra_engine::{Simulation, VarianceExperiment};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|a| a == "variance") {
-        let seed = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(42);
-        std::process::exit(run_variance(seed));
+    match args.first().map(|s| s.as_str()) {
+        Some("variance") => {
+            let seed = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(42);
+            std::process::exit(run_variance(seed));
+        }
+        Some("coevolution") => {
+            let seed = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(42);
+            std::process::exit(run_coevolution(seed));
+        }
+        Some("gossip") => {
+            let seed = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(42);
+            std::process::exit(run_gossip(seed));
+        }
+        _ => {
+            let seed: u64 = args.first().and_then(|a| a.parse().ok()).unwrap_or(42);
+            std::process::exit(run_town(seed));
+        }
     }
-
-    let seed: u64 = args.first().and_then(|a| a.parse().ok()).unwrap_or(42);
-    std::process::exit(run_town(seed));
 }
 
 fn run_town(seed: u64) -> i32 {
@@ -88,4 +99,89 @@ fn bar(rate: f64) -> String {
 
 fn verdict(ok: bool) -> &'static str {
     if ok { "OK" } else { "MISMATCH" }
+}
+
+fn run_coevolution(seed: u64) -> i32 {
+    let personas: Vec<ShopperPersona> = vec![
+        ShopperPersona::new("careful-clara", 0.95, 0.05),
+        ShopperPersona::new("distracted-dan", 0.60, 0.20),
+        ShopperPersona::new("lazy-lou", 0.50, 0.50),
+        ShopperPersona::new("steady-sue", 0.80, 0.10),
+        ShopperPersona::new("hasty-hank", 0.70, 0.30),
+        ShopperPersona::new("dreamy-dora", 0.55, 0.35),
+    ];
+    let refs: Vec<&dyn Persona> = personas.iter().map(|p| p as &dyn Persona).collect();
+
+    println!("coevolution (seed {seed}): 8 rounds of the Synthesizer/Solver game");
+    let report = match simulacra_engine::CoEvolution::seeded(seed).run(&refs, 8) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("coevolution aborted: {e}");
+            return 1;
+        }
+    };
+
+    for round in &report.rounds {
+        println!(
+            "  round {}: {:>2} shops x {} items -> success {:.0}% {}",
+            round.round,
+            round.n_shops,
+            round.items_per_shop,
+            round.success_rate * 100.0,
+            bar(round.success_rate),
+        );
+    }
+    println!("\nthe synthesizer ratchets difficulty up while success > 75%, down below 40%");
+    0
+}
+
+fn run_gossip(seed: u64) -> i32 {
+    use simulacra_agents::{ExplorerPersona, GossipBook, GossipingPersona};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let mk = |trust: f64, book: Rc<RefCell<GossipBook>>| -> Vec<Box<dyn Persona>> {
+        (0..6)
+            .map(|i| {
+                let base = ExplorerPersona::new(format!("explorer-{i}"), 0.1);
+                if trust > 0.0 {
+                    Box::new(GossipingPersona::new(base, book.clone(), trust)) as Box<dyn Persona>
+                } else {
+                    Box::new(base) as Box<dyn Persona>
+                }
+            })
+            .collect()
+    };
+
+    println!("gossip experiment (seed {seed}): hidden locations, 6 explorers, 4 shops");
+    let control_book = Rc::new(RefCell::new(GossipBook::default()));
+    let plain = mk(0.0, control_book.clone());
+    let plain_refs: Vec<&dyn Persona> = plain.iter().map(|p| p.as_ref()).collect();
+    let without = match Simulation::seeded(seed).run_town_hidden(4, &plain_refs, &control_book) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("gossip control aborted: {e}");
+            return 1;
+        }
+    };
+
+    let book = Rc::new(RefCell::new(GossipBook::default()));
+    let wired = mk(0.9, book.clone());
+    let wired_refs: Vec<&dyn Persona> = wired.iter().map(|p| p.as_ref()).collect();
+    let with = match Simulation::seeded(seed).run_town_hidden(4, &wired_refs, &book) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("gossip run aborted: {e}");
+            return 1;
+        }
+    };
+
+    println!("  without gossip: success {:.0}%  {}", without.success_rate() * 100.0, bar(without.success_rate()));
+    println!("  with gossip:    success {:.0}%  {}", with.success_rate() * 100.0, bar(with.success_rate()));
+    println!(
+        "\n{} sightings published; gossip lifted success by {:.1} points",
+        book.borrow().len(),
+        (with.success_rate() - without.success_rate()) * 100.0,
+    );
+    0
 }

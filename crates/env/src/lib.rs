@@ -81,6 +81,25 @@ impl TaskWorld {
     }
 }
 
+/// Tunable parameters for town synthesis — the knobs an adversarial
+/// synthesizer raises and lowers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TownConfig {
+    /// How many shops the town has. More shops means more chances for a
+    /// persona to misremember.
+    pub n_shops: u64,
+    /// Distinct items stocked per shop.
+    pub items_per_shop: u64,
+    /// Maximum units of any stocked item (stock is 1..=ceiling).
+    pub stock_ceiling: u64,
+}
+
+impl Default for TownConfig {
+    fn default() -> Self {
+        TownConfig { n_shops: 4, items_per_shop: 3, stock_ceiling: 4 }
+    }
+}
+
 /// Synthesizes towns (collections of task worlds) from a seed.
 #[derive(Debug)]
 pub struct EnvironmentSynthesizer {
@@ -96,13 +115,22 @@ impl EnvironmentSynthesizer {
     /// Grow a town of `n_shops` shops, each stocked with `items_per_shop`
     /// distinct items, and emit one task per shop.
     pub fn synthesize_town(&self, n_shops: u64, items_per_shop: u64) -> Vec<TaskWorld> {
+        self.synthesize_town_with(&TownConfig {
+            n_shops,
+            items_per_shop,
+            stock_ceiling: 4,
+        })
+    }
+
+    /// Grow a town from an explicit [`TownConfig`].
+    pub fn synthesize_town_with(&self, config: &TownConfig) -> Vec<TaskWorld> {
         let mut rng = simulacra_agents::Rng::seeded(self.seed);
         let mut worlds = Vec::new();
-        for shop in 0..n_shops {
+        for shop in 0..config.n_shops {
             let id = shop;
             let mut stock = Vec::new();
             let mut used = Vec::new();
-            for _ in 0..items_per_shop {
+            for _ in 0..config.items_per_shop {
                 let item = loop {
                     let candidate = ITEMS[rng.below(ITEMS.len() as u64) as usize];
                     if !used.contains(&candidate) {
@@ -110,7 +138,7 @@ impl EnvironmentSynthesizer {
                         break candidate;
                     }
                 };
-                stock.push(Stock { item: item.into(), quantity: 1 + rng.below(4) });
+                stock.push(Stock { item: item.into(), quantity: 1 + rng.below(config.stock_ceiling) });
             }
             let task_item = stock[0].item.clone();
             let task_qty = stock[0].quantity;

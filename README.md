@@ -1,5 +1,7 @@
 # Simulacra
 
+**Live:** [simulation.lucanian.app](https://simulation.lucanian.app) — research tracker · [`/app/`](https://simulation.lucanian.app/app/) — playground UI
+
 A Rust-first project dedicated to the new trend of **synthetic human
 simulation** — the observation that synthetic data, synthetic rubrics, AI
 researchers, and end-to-end RL environments are one thing: increasingly

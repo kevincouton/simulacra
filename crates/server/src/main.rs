@@ -128,7 +128,14 @@ fn handle(mut stream: TcpStream, root: &std::path::Path, store: &RefCell<a2a::St
         }
         ("GET", "/healthz") => respond(&mut stream, 200, "text/plain", "ok", ""),
         ("GET", _) => serve_static(&mut stream, root, path),
-        _ => respond(&mut stream, 405, "text/plain", "method not allowed", ""),
+        // Known GET-only routes get 405; genuinely unknown paths get 404
+        // no matter the method.
+        (m, p) if m != "GET"
+            && matches!(p, "/api/town" | "/api/variance" | "/api/coevolution" | "/api/gossip" | "/healthz") =>
+        {
+            respond(&mut stream, 405, "text/plain", "method not allowed", "")
+        }
+        _ => respond(&mut stream, 404, "text/plain", "not found", ""),
     }
 }
 

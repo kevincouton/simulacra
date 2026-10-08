@@ -3,7 +3,7 @@
     <header class="topnav">
       <div class="brand">
         <span class="logo" aria-hidden="true">⬡</span>
-        <span class="brand-name">Simulacra</span>
+        <h1 class="brand-name">Simulacra</h1>
       </div>
       <nav class="nav-links">
         <a href="#town">Town Run</a>
@@ -38,7 +38,7 @@
         <p v-if="town.error" class="placeholder">Start the simulacra server to see live data</p>
 
         <template v-else-if="town.data">
-          <p class="summary">
+          <p class="summary" aria-live="polite">
             <strong>{{ town.data.results.length }}</strong> attempts ·
             <strong>{{ pct(town.data.success_rate) }}</strong> success rate ·
             <strong>{{ town.data.total_reward }}</strong> total reward
@@ -108,7 +108,7 @@
             </div>
           </div>
 
-          <div class="verdict">
+          <div class="verdict" aria-live="polite">
             <div class="verdict-row">
               <span class="verdict-name">Mean</span>
               <span>empirical {{ variance.data.empirical_mean.toFixed(3) }}</span>
@@ -205,7 +205,7 @@
         <p v-if="gossip.error" class="placeholder">Start the simulacra server to see live data</p>
 
         <template v-else-if="gossip.data">
-          <div class="cards">
+          <div class="cards" aria-live="polite">
             <div class="card">
               <div class="card-value">{{ pct(gossip.data.no_gossip_rate) }}</div>
               <div class="card-label">Success rate without gossip</div>
@@ -244,13 +244,18 @@ const variance = useSection()
 const coevolution = useSection()
 const gossip = useSection()
 
-async function fetchJson(section, path) {
+async function fetchJson(section, path, key) {
   section.loading = true
   section.error = false
   try {
     const res = await fetch(`${path}?seed=${encodeURIComponent(section.seed)}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     section.data = await res.json()
+    // Make the run shareable: /app/?section=gossip&seed=7 reproduces it.
+    const url = new URL(window.location.href)
+    url.searchParams.set('section', key)
+    url.searchParams.set('seed', section.seed)
+    window.history.replaceState(null, '', url)
   } catch (e) {
     section.error = true
     section.data = null
@@ -259,10 +264,26 @@ async function fetchJson(section, path) {
   }
 }
 
-const loadTown = () => fetchJson(town, '/api/town')
-const loadVariance = () => fetchJson(variance, '/api/variance')
-const loadCoevolution = () => fetchJson(coevolution, '/api/coevolution')
-const loadGossip = () => fetchJson(gossip, '/api/gossip')
+const loadTown = () => fetchJson(town, '/api/town', 'town')
+const loadVariance = () => fetchJson(variance, '/api/variance', 'variance')
+const loadCoevolution = () => fetchJson(coevolution, '/api/coevolution', 'coevolution')
+const loadGossip = () => fetchJson(gossip, '/api/gossip', 'gossip')
+
+const RUNNERS = { town: loadTown, variance: loadVariance, coevolution: loadCoevolution, gossip: loadGossip }
+
+// Deep links: ?section=gossip&seed=7&run=1 applies the seed to every
+// section and auto-runs the named one (shared reproducible runs).
+onMounted(() => {
+  const params = new URLSearchParams(window.location.search)
+  const seed = params.get('seed')
+  if (seed !== null && /^\d+$/.test(seed)) {
+    for (const s of [town, variance, coevolution, gossip]) s.seed = seed
+  }
+  const section = params.get('section')
+  if (params.get('run') === '1' && section && RUNNERS[section]) {
+    RUNNERS[section]()
+  }
+})
 
 const isPass = (r) => r.reward >= 1 && (!r.violations || r.violations.length === 0)
 const pct = (x) => `${(x * 100).toFixed(1)}%`
@@ -316,6 +337,11 @@ body {
   align-items: center;
   gap: 0.5rem;
   font-weight: 700;
+}
+
+.brand-name {
+  margin: 0;
+  font-size: 1rem;
 }
 
 .logo {

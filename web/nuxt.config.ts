@@ -5,6 +5,12 @@ export default defineNuxtConfig({
       routes: ['/'],
     },
   },
+  runtimeConfig: {
+    public: {
+      posthogKey: process.env.NUXT_PUBLIC_POSTHOG_KEY || '',
+      posthogHost: process.env.NUXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com',
+    },
+  },
   // Served under /app/ by simulacra-server (the tracker owns the root for SEO).
   app: {
     baseURL: '/app/',

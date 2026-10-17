@@ -230,6 +230,8 @@
 <script setup>
 const DEFAULT_SEED = '42'
 
+const { track } = useAnalytics()
+
 function useSection() {
   return reactive({
     seed: DEFAULT_SEED,
@@ -251,6 +253,7 @@ async function fetchJson(section, path, key) {
     const res = await fetch(`${path}?seed=${encodeURIComponent(section.seed)}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     section.data = await res.json()
+    track('experiment_run', { section: key, seed: section.seed })
     // Make the run shareable: /app/?section=gossip&seed=7 reproduces it.
     const url = new URL(window.location.href)
     url.searchParams.set('section', key)
@@ -274,6 +277,7 @@ const RUNNERS = { town: loadTown, variance: loadVariance, coevolution: loadCoevo
 // Deep links: ?section=gossip&seed=7&run=1 applies the seed to every
 // section and auto-runs the named one (shared reproducible runs).
 onMounted(() => {
+  track('playground_viewed')
   const params = new URLSearchParams(window.location.search)
   const seed = params.get('seed')
   if (seed !== null && /^\d+$/.test(seed)) {

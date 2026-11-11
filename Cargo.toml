@@ -15,3 +15,11 @@ license = "MIT"
 
 [profile.release]
 lto = true
+
+[workspace.lints.clippy]
+# Google Rust Style Guide aligned lints (see RUST_STYLE.md)
+wildcard_imports = "deny"
+uninlined_format_args = "deny"
+implicit_clone = "deny"
+redundant_field_names = "deny"
+ptr_arg = "deny"

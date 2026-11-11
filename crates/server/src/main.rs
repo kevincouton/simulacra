@@ -33,7 +33,9 @@ fn main() {
     let root = workspace_root();
     // Rebuild the research tracker from content at startup so the served
     // HTML is always current.
-    if let Err(e) = simulacra_tracker::build_site(&root.join("content"), &root.join("site").join("dist")) {
+    if let Err(e) =
+        simulacra_tracker::build_site(&root.join("content"), &root.join("site").join("dist"))
+    {
         eprintln!("tracker rebuild failed: {e}");
         std::process::exit(1);
     }
@@ -43,7 +45,10 @@ fn main() {
     let store = match std::fs::create_dir_all(&data_dir) {
         Ok(()) => a2a::Store::open(&data_dir.join("a2a-tasks.jsonl")),
         Err(e) => {
-            eprintln!("cannot create {}, tasks will not persist: {e}", data_dir.display());
+            eprintln!(
+                "cannot create {}, tasks will not persist: {e}",
+                data_dir.display()
+            );
             a2a::Store::new()
         }
     };
@@ -54,9 +59,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!(
-        "simulacra server on http://{bind} (tracker + /app/ UI + /api/ + /mcp + /a2a/)"
-    );
+    println!("simulacra server on http://{bind} (tracker + /app/ UI + /api/ + /mcp + /a2a/)");
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
@@ -95,7 +98,11 @@ pub fn json_escape(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
-fn handle(mut stream: TcpStream, root: &std::path::Path, store: &RefCell<a2a::Store>) -> std::io::Result<()> {
+fn handle(
+    mut stream: TcpStream,
+    root: &std::path::Path,
+    store: &RefCell<a2a::Store>,
+) -> std::io::Result<()> {
     let Some((method, target, body)) = read_request(&mut stream)? else {
         return respond(&mut stream, 400, "text/plain", "bad request", "");
     };
@@ -112,26 +119,68 @@ fn handle(mut stream: TcpStream, root: &std::path::Path, store: &RefCell<a2a::St
 
     const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type, mcp-session-id\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
     match (method.as_str(), path) {
-        ("GET", "/api/town") => respond(&mut stream, 200, "application/json", &sim::run_town(seed), ""),
-        ("GET", "/api/variance") => respond(&mut stream, 200, "application/json", &sim::run_variance(seed), ""),
-        ("GET", "/api/coevolution") => respond(&mut stream, 200, "application/json", &sim::run_coevolution(seed), ""),
-        ("GET", "/api/gossip") => respond(&mut stream, 200, "application/json", &sim::run_gossip(seed), ""),
-        ("POST", "/mcp") => respond(&mut stream, 200, "application/json", &mcp::handle(root, &body), CORS),
-        ("POST", "/a2a") | ("POST", "/a2a/") => {
-            respond(&mut stream, 200, "application/json", &a2a::handle(root, store, &body), CORS)
-        }
+        ("GET", "/api/town") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &sim::run_town(seed),
+            "",
+        ),
+        ("GET", "/api/variance") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &sim::run_variance(seed),
+            "",
+        ),
+        ("GET", "/api/coevolution") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &sim::run_coevolution(seed),
+            "",
+        ),
+        ("GET", "/api/gossip") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &sim::run_gossip(seed),
+            "",
+        ),
+        ("POST", "/mcp") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &mcp::handle(root, &body),
+            CORS,
+        ),
+        ("POST", "/a2a") | ("POST", "/a2a/") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &a2a::handle(root, store, &body),
+            CORS,
+        ),
         ("OPTIONS", "/mcp") | ("OPTIONS", "/a2a") | ("OPTIONS", "/a2a/") => {
             respond(&mut stream, 204, "text/plain", "", CORS)
         }
-        ("GET", "/.well-known/agent.json") | ("GET", "/a2a/agent.json") => {
-            respond(&mut stream, 200, "application/json", &a2a::agent_card(), CORS)
-        }
+        ("GET", "/.well-known/agent.json") | ("GET", "/a2a/agent.json") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &a2a::agent_card(),
+            CORS,
+        ),
         ("GET", "/healthz") => respond(&mut stream, 200, "text/plain", "ok", ""),
         ("GET", _) => serve_static(&mut stream, root, path),
         // Known GET-only routes get 405; genuinely unknown paths get 404
         // no matter the method.
-        (m, p) if m != "GET"
-            && matches!(p, "/api/town" | "/api/variance" | "/api/coevolution" | "/api/gossip" | "/healthz") =>
+        (m, p)
+            if m != "GET"
+                && matches!(
+                    p,
+                    "/api/town" | "/api/variance" | "/api/coevolution" | "/api/gossip" | "/healthz"
+                ) =>
         {
             respond(&mut stream, 405, "text/plain", "method not allowed", "")
         }
@@ -213,11 +262,21 @@ fn respond(
 /// Map a URL path to a file under either the web UI (`web/.output/public`,
 /// under `/app/`) or the research tracker (`site/dist`, the default),
 /// with a traversal guard.
-fn serve_static(stream: &mut TcpStream, root: &std::path::Path, url_path: &str) -> std::io::Result<()> {
+fn serve_static(
+    stream: &mut TcpStream,
+    root: &std::path::Path,
+    url_path: &str,
+) -> std::io::Result<()> {
     let (base, rel) = if let Some(rest) = url_path.strip_prefix("/app") {
-        (root.join("web").join(".output").join("public"), rest.trim_start_matches('/'))
+        (
+            root.join("web").join(".output").join("public"),
+            rest.trim_start_matches('/'),
+        )
     } else {
-        (root.join("site").join("dist"), url_path.trim_start_matches('/'))
+        (
+            root.join("site").join("dist"),
+            url_path.trim_start_matches('/'),
+        )
     };
     let rel = if rel.is_empty() { "index.html" } else { rel };
     let file = base.join(rel);

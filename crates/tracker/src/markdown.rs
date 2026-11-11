@@ -72,7 +72,9 @@ fn close_list(html: &mut String, list: &mut Option<ListKind>) {
 }
 
 fn is_ordered_item(line: &str) -> bool {
-    let Some(dot) = line.find('.') else { return false };
+    let Some(dot) = line.find('.') else {
+        return false;
+    };
     let (num, rest) = (&line[..dot], &line[dot + 1..]);
     !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) && rest.starts_with(' ')
 }
@@ -115,7 +117,9 @@ fn replace_pairs(s: &str, delim: &str, open: &str, close: &str) -> String {
     let mut s = s.to_string();
     while let Some(start) = s.find(delim) {
         let after = &s[start + delim.len()..];
-        let Some(rel_end) = after.find(delim) else { break };
+        let Some(rel_end) = after.find(delim) else {
+            break;
+        };
         let end = start + delim.len() + rel_end;
         let inner = &s[start + delim.len()..end];
         let replacement = format!("{open}{inner}{close}");
@@ -156,7 +160,10 @@ fn replace_links(s: &str) -> String {
 }
 
 fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 #[cfg(test)]

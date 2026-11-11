@@ -44,7 +44,9 @@ impl Json {
     }
 
     pub fn as_u64(&self) -> Option<u64> {
-        self.as_f64().filter(|n| *n >= 0.0 && n.fract() == 0.0).map(|n| n as u64)
+        self.as_f64()
+            .filter(|n| *n >= 0.0 && n.fract() == 0.0)
+            .map(|n| n as u64)
     }
 
     pub fn as_arr(&self) -> Option<&[Json]> {
@@ -69,6 +71,9 @@ impl Json {
         Some(cur)
     }
 
+    // Deliberately named `to_string` as the public serialization API of this
+    // hand-rolled JSON type; does not go through the ToString trait.
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         let mut out = String::new();
         self.write(&mut out);
@@ -134,7 +139,10 @@ fn write_str(s: &str, out: &mut String) {
 }
 
 pub fn parse(input: &str) -> Result<Json, String> {
-    let mut p = Parser { b: input.as_bytes(), i: 0 };
+    let mut p = Parser {
+        b: input.as_bytes(),
+        i: 0,
+    };
     p.skip_ws();
     let v = p.value()?;
     p.skip_ws();
@@ -312,7 +320,10 @@ impl<'a> Parser<'a> {
 
     fn hex4(&mut self) -> Result<u32, String> {
         // self.i points at 'u'; the four hex digits follow it.
-        let digits = self.b.get(self.i + 1..self.i + 5).ok_or("truncated \\u escape")?;
+        let digits = self
+            .b
+            .get(self.i + 1..self.i + 5)
+            .ok_or("truncated \\u escape")?;
         let s = std::str::from_utf8(digits).map_err(|_| "bad \\u escape")?;
         self.i += 4;
         u32::from_str_radix(s, 16).map_err(|_| "bad \\u escape".into())
@@ -342,7 +353,9 @@ impl<'a> Parser<'a> {
             }
         }
         let s = std::str::from_utf8(&self.b[start..self.i]).map_err(|_| "bad number")?;
-        s.parse::<f64>().map(Json::Num).map_err(|e| format!("bad number '{s}': {e}"))
+        s.parse::<f64>()
+            .map(Json::Num)
+            .map_err(|e| format!("bad number '{s}': {e}"))
     }
 }
 

@@ -33,7 +33,11 @@ impl Default for CurlProvider {
 
 impl CurlProvider {
     /// Build a provider from explicit settings instead of the environment.
-    pub fn with_settings(endpoint: impl Into<String>, model: impl Into<String>, api_key: impl Into<String>) -> Self {
+    pub fn with_settings(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
         CurlProvider {
             endpoint: endpoint.into(),
             model: model.into(),
@@ -46,7 +50,10 @@ impl LlmProvider for CurlProvider {
     fn complete(&self, prompt: &str) -> Option<String> {
         let key = self.api_key.as_ref()?;
         // The prompt is embedded as a JSON string; escape what matters.
-        let escaped = prompt.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+        let escaped = prompt
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
         let body = format!(
             "{{\"model\":\"{}\",\"messages\":[{{\"role\":\"user\",\"content\":\"{}\"}}]}}",
             self.model, escaped
@@ -111,8 +118,12 @@ mod tests {
 
     #[test]
     fn extract_content_pulls_first_choice() {
-        let json = r#"{"choices":[{"message":{"role":"assistant","content":"hi \"there\"\nfriend"}}]}"#;
-        assert_eq!(extract_content(json).as_deref(), Some("hi \"there\"\nfriend"));
+        let json =
+            r#"{"choices":[{"message":{"role":"assistant","content":"hi \"there\"\nfriend"}}]}"#;
+        assert_eq!(
+            extract_content(json).as_deref(),
+            Some("hi \"there\"\nfriend")
+        );
     }
 
     #[test]

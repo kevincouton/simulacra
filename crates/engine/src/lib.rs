@@ -65,7 +65,11 @@ impl Simulation {
     /// Run the town playground: `n_shops` task worlds, each attempted by
     /// every persona. Verifiers are stress-tested first; a verifier that
     /// fails its stress test aborts the run with an error.
-    pub fn run_town(&self, n_shops: u64, personas: &[&dyn Persona]) -> Result<SimulationReport, String> {
+    pub fn run_town(
+        &self,
+        n_shops: u64,
+        personas: &[&dyn Persona],
+    ) -> Result<SimulationReport, String> {
         let worlds = EnvironmentSynthesizer::new(self.seed).synthesize_town(n_shops, 3);
         self.run_worlds(worlds, personas, false, None)
     }
@@ -104,7 +108,11 @@ impl Simulation {
         let mut results = Vec::new();
         for world in &worlds {
             let views: Vec<_> = worlds.iter().map(TaskWorld::view).collect();
-            let prompt = if hidden { hidden_task_prompt(world) } else { task_prompt(world) };
+            let prompt = if hidden {
+                hidden_task_prompt(world)
+            } else {
+                task_prompt(world)
+            };
             let verifier = &verifiers[world.id() as usize];
             for persona in personas {
                 let attempt = persona.act(&prompt, &views, &mut rng);
@@ -112,8 +120,11 @@ impl Simulation {
                 let reward = verifier.reward(&attempt, world);
                 if reward == 1.0 {
                     if let Some(book) = book {
-                        book.borrow_mut()
-                            .report(persona.name(), world.id(), world.task().item.clone());
+                        book.borrow_mut().report(
+                            persona.name(),
+                            world.id(),
+                            world.task().item.clone(),
+                        );
                     }
                 }
                 results.push(TaskResult {
@@ -131,7 +142,12 @@ impl Simulation {
 
 /// Render the task prompt for a world, e.g. "Buy 3 apples at shop 2."
 pub fn task_prompt(world: &TaskWorld) -> String {
-    format!("Buy {} {} at shop {}.", world.task().quantity, world.task().item, world.task().shop_id)
+    format!(
+        "Buy {} {} at shop {}.",
+        world.task().quantity,
+        world.task().item,
+        world.task().shop_id
+    )
 }
 
 /// Render a hidden-location prompt: the item is named, the shop is not.
@@ -207,7 +223,13 @@ impl VarianceExperiment {
     pub fn new(seed: u64, n_runs: usize, n_agents: usize, n_shops: u64) -> Self {
         assert!(n_runs >= 2, "need at least 2 runs to estimate variance");
         assert!(n_agents >= 1, "need at least 1 agent per population");
-        VarianceExperiment { seed, n_runs, n_agents, n_shops, distribution: PopulationDistribution::Uniform }
+        VarianceExperiment {
+            seed,
+            n_runs,
+            n_agents,
+            n_shops,
+            distribution: PopulationDistribution::Uniform,
+        }
     }
 
     /// Sample populations from a non-uniform distribution (see
@@ -330,26 +352,32 @@ impl CoEvolution {
     }
 
     /// Play `n_rounds` rounds against `personas`.
-    pub fn run(&self, personas: &[&dyn Persona], n_rounds: usize) -> Result<CoevolutionReport, String> {
+    pub fn run(
+        &self,
+        personas: &[&dyn Persona],
+        n_rounds: usize,
+    ) -> Result<CoevolutionReport, String> {
         if personas.is_empty() {
             return Err("co-evolution needs at least one persona".into());
         }
-        let mut config = TownConfig { n_shops: 3, items_per_shop: 2, ..TownConfig::default() };
+        let mut config = TownConfig {
+            n_shops: 3,
+            items_per_shop: 2,
+            ..TownConfig::default()
+        };
         let mut rounds = Vec::with_capacity(n_rounds);
         for round in 0..n_rounds {
             let sim_seed = self.seed ^ (round as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
             // Judge: the environment must be solvable — every synthesized
             // verifier must pass its stress test before anyone trains on it.
-            let worlds = EnvironmentSynthesizer::new(sim_seed)
-                .synthesize_town_with(&config);
+            let worlds = EnvironmentSynthesizer::new(sim_seed).synthesize_town_with(&config);
             for world in &worlds {
                 Verifier::synthesize(world)
                     .stress_test(world)
                     .map_err(|e| format!("round {round}: unsolvable environment: {e}"))?;
             }
             // Solver: the population attempts the environment.
-            let report = Simulation::seeded(sim_seed)
-                .run_town(config.n_shops, personas)?;
+            let report = Simulation::seeded(sim_seed).run_town(config.n_shops, personas)?;
             let success_rate = report.success_rate();
             rounds.push(CoevolutionRound {
                 round,
@@ -399,8 +427,9 @@ mod tests {
 
     #[test]
     fn same_seed_replays_identically() {
-        let personas: Vec<ShopperPersona> =
-            (0..3).map(|i| ShopperPersona::new(format!("p{i}"), 0.9, 0.1)).collect();
+        let personas: Vec<ShopperPersona> = (0..3)
+            .map(|i| ShopperPersona::new(format!("p{i}"), 0.9, 0.1))
+            .collect();
         let refs: Vec<&dyn Persona> = personas.iter().map(|p| p as &dyn Persona).collect();
         let a = Simulation::seeded(7).run_town(3, &refs).unwrap();
         let b = Simulation::seeded(7).run_town(3, &refs).unwrap();
@@ -417,7 +446,9 @@ mod tests {
 
     #[test]
     fn population_reproduces_theoretical_distribution() {
-        let report = VarianceExperiment::new(42, 30, 20, 4).run().expect("experiment failed");
+        let report = VarianceExperiment::new(42, 30, 20, 4)
+            .run()
+            .expect("experiment failed");
         assert!(
             report.distribution_match(),
             "mean: {:.3} vs {:.3} (match={}), variance: {:.5} vs {:.5} (match={})",
@@ -452,7 +483,10 @@ mod tests {
             .with_distribution(PopulationDistribution::SkewedLowRecall)
             .run()
             .expect("experiment failed");
-        assert!(report.distribution_match(), "skewed population drifted from theory");
+        assert!(
+            report.distribution_match(),
+            "skewed population drifted from theory"
+        );
     }
 
     #[test]
@@ -500,7 +534,8 @@ mod tests {
                 .map(|i| {
                     let base = ExplorerPersona::new(format!("explorer-{i}"), 0.1);
                     if trust > 0.0 {
-                        Box::new(GossipingPersona::new(base, book.clone(), trust)) as Box<dyn Persona>
+                        Box::new(GossipingPersona::new(base, book.clone(), trust))
+                            as Box<dyn Persona>
                     } else {
                         Box::new(base) as Box<dyn Persona>
                     }
@@ -508,17 +543,22 @@ mod tests {
                 .collect()
         };
 
-        let plain: Vec<Box<dyn Persona>> = mk_explorers(0.0, Rc::new(RefCell::new(GossipBook::default())));
+        let plain: Vec<Box<dyn Persona>> =
+            mk_explorers(0.0, Rc::new(RefCell::new(GossipBook::default())));
         let plain_refs: Vec<&dyn Persona> = plain.iter().map(|p| p.as_ref()).collect();
         // Plain explorers never consult the book, but the API requires one —
         // a fresh book keeps the control honest.
         let control_book = Rc::new(RefCell::new(GossipBook::default()));
-        let without = Simulation::seeded(13).run_town_hidden(4, &plain_refs, &control_book).unwrap();
+        let without = Simulation::seeded(13)
+            .run_town_hidden(4, &plain_refs, &control_book)
+            .unwrap();
 
         let book = Rc::new(RefCell::new(GossipBook::default()));
         let wired: Vec<Box<dyn Persona>> = mk_explorers(0.9, book.clone());
         let wired_refs: Vec<&dyn Persona> = wired.iter().map(|p| p.as_ref()).collect();
-        let with = Simulation::seeded(13).run_town_hidden(4, &wired_refs, &book).unwrap();
+        let with = Simulation::seeded(13)
+            .run_town_hidden(4, &wired_refs, &book)
+            .unwrap();
 
         assert!(
             with.success_rate() > without.success_rate(),
@@ -526,6 +566,9 @@ mod tests {
             with.success_rate(),
             without.success_rate(),
         );
-        assert!(!book.borrow().is_empty(), "successful agents should have published sightings");
+        assert!(
+            !book.borrow().is_empty(),
+            "successful agents should have published sightings"
+        );
     }
 }

@@ -82,6 +82,8 @@ pub fn build_site(content_dir: &Path, output_dir: &Path) -> Result<Vec<PathBuf>,
     let mut pages = vec![load_page(index, "index".into(), "index.html".into())?];
 
     // Optional top-level pages rendered after the index and before stages.
+    // The single-element array is deliberate: more optional pages are added here.
+    #[allow(clippy::single_element_loop)]
     for (file, slug, output) in [("agents.md", "agents", "agents.html")] {
         let path = content_dir.join(file);
         if path.is_file() {
@@ -97,11 +99,16 @@ pub fn build_site(content_dir: &Path, output_dir: &Path) -> Result<Vec<PathBuf>,
     stage_files.sort();
 
     for path in stage_files {
-        let slug = path.file_stem().and_then(|s| s.to_str()).unwrap_or("stage").to_string();
+        let slug = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("stage")
+            .to_string();
         pages.push(load_page(path, slug.clone(), format!("{slug}.html"))?);
     }
 
-    fs::create_dir_all(output_dir).map_err(|e| format!("creating {}: {e}", output_dir.display()))?;
+    fs::create_dir_all(output_dir)
+        .map_err(|e| format!("creating {}: {e}", output_dir.display()))?;
     fs::write(output_dir.join("style.css"), STYLE_CSS)
         .map_err(|e| format!("writing style.css: {e}"))?;
 
@@ -116,7 +123,8 @@ pub fn build_site(content_dir: &Path, output_dir: &Path) -> Result<Vec<PathBuf>,
     }
 
     let sitemap = render_sitemap(&pages);
-    fs::write(output_dir.join("sitemap.xml"), sitemap).map_err(|e| format!("writing sitemap: {e}"))?;
+    fs::write(output_dir.join("sitemap.xml"), sitemap)
+        .map_err(|e| format!("writing sitemap: {e}"))?;
     written.push(output_dir.join("sitemap.xml"));
     fs::write(output_dir.join("robots.txt"), render_robots())
         .map_err(|e| format!("writing robots.txt: {e}"))?;
@@ -181,7 +189,7 @@ fn truncate_words(s: &str, max: usize) -> String {
 
 /// Remove the Markdown inline syntax the tracker content actually uses.
 fn strip_markdown(s: &str) -> String {
-    s.replace("**", "").replace('*', "").replace('`', "")
+    s.replace(['*', '`'], "")
 }
 
 fn read(path: &Path) -> Result<String, String> {
@@ -189,7 +197,10 @@ fn read(path: &Path) -> Result<String, String> {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn canonical(slug: &str) -> String {
@@ -204,8 +215,16 @@ fn wrap_page(page: &Page, body: &str, pages: &[Page], is_index: bool) -> String 
     let nav = pages
         .iter()
         .map(|p| {
-            let cls = if p.output == page.output { " class=\"active\" aria-current=\"page\"" } else { "" };
-            format!("<li><a{cls} href=\"{}\">{}</a></li>", p.output, esc(&p.nav_title))
+            let cls = if p.output == page.output {
+                " class=\"active\" aria-current=\"page\""
+            } else {
+                ""
+            };
+            format!(
+                "<li><a{cls} href=\"{}\">{}</a></li>",
+                p.output,
+                esc(&p.nav_title)
+            )
         })
         .collect::<String>();
 
@@ -330,7 +349,14 @@ fn render_robots() -> String {
 fn render_llms_txt(pages: &[Page]) -> String {
     let listing: String = pages
         .iter()
-        .map(|p| format!("- [{}]({}): {}", p.nav_title, canonical(&p.slug), p.description))
+        .map(|p| {
+            format!(
+                "- [{}]({}): {}",
+                p.nav_title,
+                canonical(&p.slug),
+                p.description
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
@@ -375,7 +401,11 @@ mod tests {
     fn fixture(tmp: &Path) {
         fs::create_dir_all(tmp.join("stages")).unwrap();
         fs::write(tmp.join("index.md"), "# Overview\n\nHello world.\n").unwrap();
-        fs::write(tmp.join("stages/01-reward.md"), "# Stage 1\n\nReward text.\n").unwrap();
+        fs::write(
+            tmp.join("stages/01-reward.md"),
+            "# Stage 1\n\nReward text.\n",
+        )
+        .unwrap();
         fs::write(tmp.join("stages/02-data.md"), "# Stage 2\n\nData text.\n").unwrap();
     }
 
@@ -393,7 +423,9 @@ mod tests {
         assert!(index.contains("<h1>Overview</h1>"));
         assert!(index.contains("01-reward.html"));
         assert!(index.contains("<meta name=\"description\" content=\"Hello world.\">"));
-        assert!(index.contains("<link rel=\"canonical\" href=\"https://simulation.lucanian.app/\">"));
+        assert!(
+            index.contains("<link rel=\"canonical\" href=\"https://simulation.lucanian.app/\">")
+        );
         assert!(index.contains("og:type\" content=\"website"));
         assert!(index.contains("\"@type\":\"FAQPage\""));
         assert!(index.contains("\"@type\":\"WebSite\""));
@@ -407,7 +439,9 @@ mod tests {
         assert!(stage.contains("\"@type\":\"TechArticle\""));
         assert!(stage.contains("og:type\" content=\"article"));
         assert!(stage.contains("<meta name=\"description\" content=\"Reward text.\">"));
-        assert!(stage.contains("<link rel=\"canonical\" href=\"https://simulation.lucanian.app/01-reward.html\">"));
+        assert!(stage.contains(
+            "<link rel=\"canonical\" href=\"https://simulation.lucanian.app/01-reward.html\">"
+        ));
 
         let sitemap = fs::read_to_string(out.join("sitemap.xml")).unwrap();
         assert!(sitemap.contains("<loc>https://simulation.lucanian.app/</loc>"));

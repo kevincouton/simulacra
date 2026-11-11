@@ -30,7 +30,10 @@ pub struct Attempt {
 impl Attempt {
     /// An attempt that does nothing — used by verifiers to reject no-ops.
     pub fn no_op(world_id: u64) -> Self {
-        Attempt { world_id, actions: Vec::new() }
+        Attempt {
+            world_id,
+            actions: Vec::new(),
+        }
     }
 }
 
@@ -128,8 +131,15 @@ impl ShopperPersona {
     /// Build a persona with the given recall and quit probabilities.
     pub fn new(name: impl Into<String>, recall: f64, quit_chance: f64) -> Self {
         assert!((0.0..=1.0).contains(&recall), "recall must be in 0.0..=1.0");
-        assert!((0.0..=1.0).contains(&quit_chance), "quit_chance must be in 0.0..=1.0");
-        ShopperPersona { name: name.into(), recall, quit_chance }
+        assert!(
+            (0.0..=1.0).contains(&quit_chance),
+            "quit_chance must be in 0.0..=1.0"
+        );
+        ShopperPersona {
+            name: name.into(),
+            recall,
+            quit_chance,
+        }
     }
 }
 
@@ -153,7 +163,10 @@ impl Persona for ShopperPersona {
         } else {
             target
         };
-        Attempt { world_id: world.id, actions: buy_actions(parse_quantity(task_prompt)) }
+        Attempt {
+            world_id: world.id,
+            actions: buy_actions(parse_quantity(task_prompt)),
+        }
     }
 }
 
@@ -169,7 +182,10 @@ impl Persona for OraclePersona {
 
     fn act(&self, _task_prompt: &str, worlds: &[WorldView], _rng: &mut Rng) -> Attempt {
         match resolve_world(_task_prompt, worlds) {
-            Some(w) => Attempt { world_id: w.id, actions: buy_actions(parse_quantity(_task_prompt)) },
+            Some(w) => Attempt {
+                world_id: w.id,
+                actions: buy_actions(parse_quantity(_task_prompt)),
+            },
             None => Attempt::no_op(0),
         }
     }
@@ -223,11 +239,19 @@ pub struct GossipReport {
 impl GossipBook {
     /// Record a sighting.
     pub fn report(&mut self, agent: impl Into<String>, shop_id: u64, item: impl Into<String>) {
-        self.reports.push(GossipReport { agent: agent.into(), shop_id, item: item.into() });
+        self.reports.push(GossipReport {
+            agent: agent.into(),
+            shop_id,
+            item: item.into(),
+        });
     }
     /// The most recent shop reported to stock `item`, if any.
     pub fn lookup(&self, item: &str) -> Option<u64> {
-        self.reports.iter().rev().find(|r| r.item == item).map(|r| r.shop_id)
+        self.reports
+            .iter()
+            .rev()
+            .find(|r| r.item == item)
+            .map(|r| r.shop_id)
     }
     /// Number of reports recorded.
     pub fn len(&self) -> usize {
@@ -255,11 +279,7 @@ pub struct GossipingPersona<P> {
 impl<P> GossipingPersona<P> {
     /// Wrap `inner` with access to `book`; `trust` is the probability of
     /// following a report when one exists.
-    pub fn new(
-        inner: P,
-        book: std::rc::Rc<std::cell::RefCell<GossipBook>>,
-        trust: f64,
-    ) -> Self {
+    pub fn new(inner: P, book: std::rc::Rc<std::cell::RefCell<GossipBook>>, trust: f64) -> Self {
         assert!((0.0..=1.0).contains(&trust), "trust must be in 0.0..=1.0");
         GossipingPersona { inner, book, trust }
     }
@@ -303,8 +323,14 @@ pub struct ExplorerPersona {
 impl ExplorerPersona {
     /// Build an explorer with the given quit probability.
     pub fn new(name: impl Into<String>, quit_chance: f64) -> Self {
-        assert!((0.0..=1.0).contains(&quit_chance), "quit_chance must be in 0.0..=1.0");
-        ExplorerPersona { name: name.into(), quit_chance }
+        assert!(
+            (0.0..=1.0).contains(&quit_chance),
+            "quit_chance must be in 0.0..=1.0"
+        );
+        ExplorerPersona {
+            name: name.into(),
+            quit_chance,
+        }
     }
 }
 
@@ -320,7 +346,10 @@ impl Persona for ExplorerPersona {
         if rng.chance(self.quit_chance) {
             return Attempt::no_op(world.id);
         }
-        Attempt { world_id: world.id, actions: buy_actions(parse_quantity(task_prompt)) }
+        Attempt {
+            world_id: world.id,
+            actions: buy_actions(parse_quantity(task_prompt)),
+        }
     }
 }
 
@@ -330,7 +359,10 @@ mod tests {
 
     fn views() -> Vec<WorldView> {
         (0..3)
-            .map(|i| WorldView { id: i, description: format!("world {i}") })
+            .map(|i| WorldView {
+                id: i,
+                description: format!("world {i}"),
+            })
             .collect()
     }
 
@@ -377,7 +409,10 @@ mod tests {
 
     #[test]
     fn parse_item_extracts_the_item() {
-        assert_eq!(parse_item("Buy 3 apples at shop 2.").as_deref(), Some("apples"));
+        assert_eq!(
+            parse_item("Buy 3 apples at shop 2.").as_deref(),
+            Some("apples")
+        );
         assert_eq!(parse_item("Buy 1 coffee.").as_deref(), Some("coffee"));
         assert_eq!(parse_item("no items here"), None);
     }
@@ -427,7 +462,10 @@ mod tests {
         // With zero trust it never lands on shop 2 via the report alone —
         // but the explorer may randomly pick it, so just check it acts.
         for _ in 0..20 {
-            assert!(!p.act("Buy 2 apples.", &views(), &mut rng).actions.is_empty());
+            assert!(!p
+                .act("Buy 2 apples.", &views(), &mut rng)
+                .actions
+                .is_empty());
         }
     }
 }

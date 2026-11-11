@@ -146,7 +146,10 @@ fn tools(root: &Path) -> Json {
                     "slug".into(),
                     Json::Obj(vec![
                         ("type".into(), Json::str("string")),
-                        ("description".into(), Json::str("stage slug from list_stages, or \"index\"")),
+                        (
+                            "description".into(),
+                            Json::str("stage slug from list_stages, or \"index\""),
+                        ),
                     ]),
                 )]),
             ),
@@ -222,13 +225,19 @@ fn stage_titles(root: &Path) -> Vec<(String, String)> {
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
         for p in paths {
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
             if p.extension().and_then(|e| e.to_str()) != Some("md") || !safe_slug(stem) {
                 continue;
             }
             let title = std::fs::read_to_string(&p)
                 .ok()
-                .and_then(|s| s.lines().find_map(|l| l.strip_prefix("# ")).map(|t| t.trim().to_string()))
+                .and_then(|s| {
+                    s.lines()
+                        .find_map(|l| l.strip_prefix("# "))
+                        .map(|t| t.trim().to_string())
+                })
                 .unwrap_or_else(|| stem.to_string());
             out.push((stem.to_string(), title));
         }
@@ -239,7 +248,12 @@ fn stage_titles(root: &Path) -> Vec<(String, String)> {
 fn list_stages(root: &Path) -> String {
     let items: Vec<String> = stage_titles(root)
         .into_iter()
-        .map(|(slug, title)| format!("{{\"slug\":\"{slug}\",\"title\":\"{}\"}}", crate::json_escape(&title)))
+        .map(|(slug, title)| {
+            format!(
+                "{{\"slug\":\"{slug}\",\"title\":\"{}\"}}",
+                crate::json_escape(&title)
+            )
+        })
         .collect();
     format!("[{}]", items.join(","))
 }
@@ -248,7 +262,9 @@ fn read_stage(root: &Path, slug: &str) -> Result<String, String> {
     let path = if slug == "index" {
         root.join("content").join("index.md")
     } else if safe_slug(slug) {
-        root.join("content").join("stages").join(format!("{slug}.md"))
+        root.join("content")
+            .join("stages")
+            .join(format!("{slug}.md"))
     } else {
         return Err(format!("invalid slug: {slug}"));
     };
@@ -266,16 +282,27 @@ mod tests {
     #[test]
     fn initialize_negotiates() {
         let res = json::parse(&handle(&root(), r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#)).unwrap();
-        assert_eq!(res.path(&["result", "serverInfo", "name"]).unwrap().as_str(), Some("simulacra"));
+        assert_eq!(
+            res.path(&["result", "serverInfo", "name"])
+                .unwrap()
+                .as_str(),
+            Some("simulacra")
+        );
         assert!(res.path(&["result", "capabilities", "tools"]).is_some());
     }
 
     #[test]
     fn lists_and_calls_tools() {
-        let res = json::parse(&handle(&root(), r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)).unwrap();
+        let res = json::parse(&handle(
+            &root(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        ))
+        .unwrap();
         let names: Vec<&str> = res
-            .path(&["result", "tools"]).unwrap()
-            .as_arr().unwrap()
+            .path(&["result", "tools"])
+            .unwrap()
+            .as_arr()
+            .unwrap()
             .iter()
             .filter_map(|t| t.get("name").and_then(Json::as_str))
             .collect();
@@ -283,14 +310,22 @@ mod tests {
 
         let res = json::parse(&handle(&root(), r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_gossip","arguments":{"seed":42}}}"#)).unwrap();
         assert_eq!(res.path(&["result", "isError"]), Some(&Json::Bool(false)));
-        let text = res.path(&["result", "content", "0", "text"]).unwrap().as_str().unwrap();
+        let text = res
+            .path(&["result", "content", "0", "text"])
+            .unwrap()
+            .as_str()
+            .unwrap();
         assert!(text.contains("\"gossip_rate\""));
     }
 
     #[test]
     fn reads_stage_documents() {
         let res = json::parse(&handle(&root(), r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_stage","arguments":{"slug":"01-reward"}}}"#)).unwrap();
-        let text = res.path(&["result", "content", "0", "text"]).unwrap().as_str().unwrap();
+        let text = res
+            .path(&["result", "content", "0", "text"])
+            .unwrap()
+            .as_str()
+            .unwrap();
         assert!(text.starts_with("# Stage 1") || text.contains("Stage 1"));
 
         let res = json::parse(&handle(&root(), r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_stage","arguments":{"slug":"../etc"}}}"#)).unwrap();
@@ -300,10 +335,27 @@ mod tests {
     #[test]
     fn errors_are_jsonrpc() {
         let res = json::parse(&handle(&root(), "{not json")).unwrap();
-        assert_eq!(res.get("error").unwrap().get("code").unwrap().as_f64(), Some(-32700.0));
-        let res = json::parse(&handle(&root(), r#"{"jsonrpc":"2.0","id":9,"method":"bogus"}"#)).unwrap();
-        assert_eq!(res.get("error").unwrap().get("code").unwrap().as_f64(), Some(-32601.0));
-        let res = json::parse(&handle(&root(), r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"nope"}}"#)).unwrap();
-        assert_eq!(res.get("error").unwrap().get("code").unwrap().as_f64(), Some(-32602.0));
+        assert_eq!(
+            res.get("error").unwrap().get("code").unwrap().as_f64(),
+            Some(-32700.0)
+        );
+        let res = json::parse(&handle(
+            &root(),
+            r#"{"jsonrpc":"2.0","id":9,"method":"bogus"}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            res.get("error").unwrap().get("code").unwrap().as_f64(),
+            Some(-32601.0)
+        );
+        let res = json::parse(&handle(
+            &root(),
+            r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"nope"}}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            res.get("error").unwrap().get("code").unwrap().as_f64(),
+            Some(-32602.0)
+        );
     }
 }

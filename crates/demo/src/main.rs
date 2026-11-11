@@ -55,7 +55,10 @@ fn run_town(seed: u64) -> i32 {
 
     for r in report.results() {
         let status = if r.reward == 1.0 { "PASS" } else { "FAIL" };
-        println!("[{status}] {:<15} shop {} | {}", r.agent, r.world_id, r.task);
+        println!(
+            "[{status}] {:<15} shop {} | {}",
+            r.agent, r.world_id, r.task
+        );
         for v in &r.violations {
             println!("         └─ {v}");
         }
@@ -86,10 +89,31 @@ fn run_variance(seed: u64) -> i32 {
         println!("  run {:>2}: {:.1}% {}", i + 1, rate * 100.0, bar(*rate));
     }
 
-    println!("\nmean:      empirical {:.3} vs theoretical {:.3}  [{}]", report.empirical_mean, report.theoretical_mean, verdict(report.mean_match));
-    println!("variance:  empirical {:.5} vs theoretical {:.5}  [{}]", report.empirical_variance, report.theoretical_variance, verdict(report.variance_match));
-    println!("\n{}", if report.distribution_match() { "DISTRIBUTION MATCH — the population reproduces theory" } else { "DISTRIBUTION MISMATCH — simulated population fails the limits standard" });
-    if report.distribution_match() { 0 } else { 1 }
+    println!(
+        "\nmean:      empirical {:.3} vs theoretical {:.3}  [{}]",
+        report.empirical_mean,
+        report.theoretical_mean,
+        verdict(report.mean_match)
+    );
+    println!(
+        "variance:  empirical {:.5} vs theoretical {:.5}  [{}]",
+        report.empirical_variance,
+        report.theoretical_variance,
+        verdict(report.variance_match)
+    );
+    println!(
+        "\n{}",
+        if report.distribution_match() {
+            "DISTRIBUTION MATCH — the population reproduces theory"
+        } else {
+            "DISTRIBUTION MISMATCH — simulated population fails the limits standard"
+        }
+    );
+    if report.distribution_match() {
+        0
+    } else {
+        1
+    }
 }
 
 fn bar(rate: f64) -> String {
@@ -98,7 +122,11 @@ fn bar(rate: f64) -> String {
 }
 
 fn verdict(ok: bool) -> &'static str {
-    if ok { "OK" } else { "MISMATCH" }
+    if ok {
+        "OK"
+    } else {
+        "MISMATCH"
+    }
 }
 
 fn run_coevolution(seed: u64) -> i32 {
@@ -176,8 +204,16 @@ fn run_gossip(seed: u64) -> i32 {
         }
     };
 
-    println!("  without gossip: success {:.0}%  {}", without.success_rate() * 100.0, bar(without.success_rate()));
-    println!("  with gossip:    success {:.0}%  {}", with.success_rate() * 100.0, bar(with.success_rate()));
+    println!(
+        "  without gossip: success {:.0}%  {}",
+        without.success_rate() * 100.0,
+        bar(without.success_rate())
+    );
+    println!(
+        "  with gossip:    success {:.0}%  {}",
+        with.success_rate() * 100.0,
+        bar(with.success_rate())
+    );
     println!(
         "\n{} sightings published; gossip lifted success by {:.1} points",
         book.borrow().len(),

@@ -69,7 +69,10 @@ impl TaskWorld {
     }
     /// Units of `item` in stock, if stocked.
     pub fn stock_of(&self, item: &str) -> Option<u64> {
-        self.stock.iter().find(|s| s.item == item).map(|s| s.quantity)
+        self.stock
+            .iter()
+            .find(|s| s.item == item)
+            .map(|s| s.quantity)
     }
     /// All stocked items.
     pub fn stock(&self) -> &[Stock] {
@@ -77,7 +80,10 @@ impl TaskWorld {
     }
     /// Public view of this world for personas.
     pub fn view(&self) -> WorldView {
-        WorldView { id: self.id, description: self.description.clone() }
+        WorldView {
+            id: self.id,
+            description: self.description.clone(),
+        }
     }
 }
 
@@ -96,7 +102,11 @@ pub struct TownConfig {
 
 impl Default for TownConfig {
     fn default() -> Self {
-        TownConfig { n_shops: 4, items_per_shop: 3, stock_ceiling: 4 }
+        TownConfig {
+            n_shops: 4,
+            items_per_shop: 3,
+            stock_ceiling: 4,
+        }
     }
 }
 
@@ -138,7 +148,10 @@ impl EnvironmentSynthesizer {
                         break candidate;
                     }
                 };
-                stock.push(Stock { item: item.into(), quantity: 1 + rng.below(config.stock_ceiling) });
+                stock.push(Stock {
+                    item: item.into(),
+                    quantity: 1 + rng.below(config.stock_ceiling),
+                });
             }
             let task_item = stock[0].item.clone();
             let task_qty = stock[0].quantity;
@@ -147,7 +160,11 @@ impl EnvironmentSynthesizer {
                 id,
                 description,
                 stock,
-                task: TaskSpec { shop_id: id, item: task_item, quantity: task_qty },
+                task: TaskSpec {
+                    shop_id: id,
+                    item: task_item,
+                    quantity: task_qty,
+                },
             });
         }
         worlds
@@ -167,7 +184,9 @@ pub struct Verifier {
 impl Verifier {
     /// Synthesize a verifier for `world`'s task from its constraints only.
     pub fn synthesize(world: &TaskWorld) -> Self {
-        Verifier { spec: world.task().clone() }
+        Verifier {
+            spec: world.task().clone(),
+        }
     }
 
     /// Binary reward: 1.0 if the attempt fully satisfies the task, else 0.0.
@@ -187,7 +206,10 @@ impl Verifier {
             return violations;
         }
         if attempt.world_id != self.spec.shop_id {
-            violations.push(format!("acted in shop {} instead of {}", attempt.world_id, self.spec.shop_id));
+            violations.push(format!(
+                "acted in shop {} instead of {}",
+                attempt.world_id, self.spec.shop_id
+            ));
         }
         if !attempt.actions.iter().any(|a| a == "buy") {
             violations.push("never bought anything".into());
@@ -197,7 +219,10 @@ impl Verifier {
         }
         let bought = attempt.actions.iter().filter(|a| *a == "buy").count() as u64;
         if bought != self.spec.quantity {
-            violations.push(format!("bought {bought} units, task requires {}", self.spec.quantity));
+            violations.push(format!(
+                "bought {bought} units, task requires {}",
+                self.spec.quantity
+            ));
         }
         if world.stock_of(&self.spec.item).unwrap_or(0) < self.spec.quantity {
             violations.push(format!("shop is out of stock of {}", self.spec.item));
@@ -224,7 +249,10 @@ impl Verifier {
         if self.reward(&no_op, world) != 0.0 {
             return Err("no-op attempt was not rejected".into());
         }
-        let unsolved = Attempt { world_id: (self.spec.shop_id + 1).max(1), actions: vec!["buy".into(), "pay".into()] };
+        let unsolved = Attempt {
+            world_id: (self.spec.shop_id + 1).max(1),
+            actions: vec!["buy".into(), "pay".into()],
+        };
         if self.reward(&unsolved, world) == 1.0 {
             return Err("unsolved attempt was not rejected".into());
         }
@@ -265,14 +293,20 @@ mod tests {
     fn verifier_passes_stress_test_on_fresh_worlds() {
         for world in town() {
             let v = Verifier::synthesize(&world);
-            v.stress_test(&world).expect("synthesized verifier failed stress test");
+            v.stress_test(&world)
+                .expect("synthesized verifier failed stress test");
         }
     }
 
     #[test]
     fn oracle_persona_earns_reward() {
         let world = town().remove(0);
-        let prompt = format!("Buy {} {} at shop {}.", world.task().quantity, world.task().item, world.task().shop_id);
+        let prompt = format!(
+            "Buy {} {} at shop {}.",
+            world.task().quantity,
+            world.task().item,
+            world.task().shop_id
+        );
         let v = Verifier::synthesize(&world);
         let mut rng = Rng::seeded(1);
         let attempt = OraclePersona.act(&prompt, &[world.view()], &mut rng);
@@ -282,7 +316,12 @@ mod tests {
     #[test]
     fn shopper_persona_earns_reward_with_recall_one() {
         let world = town().remove(0);
-        let prompt = format!("Buy {} {} at shop {}.", world.task().quantity, world.task().item, world.task().shop_id);
+        let prompt = format!(
+            "Buy {} {} at shop {}.",
+            world.task().quantity,
+            world.task().item,
+            world.task().shop_id
+        );
         let v = Verifier::synthesize(&world);
         let p = ShopperPersona::new("perfect", 1.0, 0.0);
         let mut rng = Rng::seeded(1);

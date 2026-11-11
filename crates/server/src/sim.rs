@@ -6,7 +6,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use simulacra_agents::{ExplorerPersona, GossipBook, GossipingPersona, OraclePersona, Persona, ShopperPersona};
+use simulacra_agents::{
+    ExplorerPersona, GossipBook, GossipingPersona, OraclePersona, Persona, ShopperPersona,
+};
 use simulacra_engine::{CoEvolution, Simulation, VarianceExperiment};
 
 pub const DEFAULT_SEED: u64 = 42;
@@ -82,7 +84,7 @@ pub fn run_variance(seed: u64) -> String {
 }
 
 pub fn run_coevolution(seed: u64) -> String {
-    let personas = vec![
+    let personas = [
         ShopperPersona::new("careful-clara", 0.95, 0.05),
         ShopperPersona::new("distracted-dan", 0.60, 0.20),
         ShopperPersona::new("lazy-lou", 0.50, 0.50),
@@ -122,12 +124,16 @@ pub fn run_gossip(seed: u64) -> String {
     let control_book = Rc::new(RefCell::new(GossipBook::default()));
     let plain = mk(0.0, control_book.clone());
     let plain_refs = as_refs(&plain);
-    let without = Simulation::seeded(seed).run_town_hidden(4, &plain_refs, &control_book).unwrap();
+    let without = Simulation::seeded(seed)
+        .run_town_hidden(4, &plain_refs, &control_book)
+        .unwrap();
 
     let book = Rc::new(RefCell::new(GossipBook::default()));
     let wired = mk(0.9, book.clone());
     let wired_refs = as_refs(&wired);
-    let with = Simulation::seeded(seed).run_town_hidden(4, &wired_refs, &book).unwrap();
+    let with = Simulation::seeded(seed)
+        .run_town_hidden(4, &wired_refs, &book)
+        .unwrap();
 
     format!(
         "{{\"seed\":{seed},\"no_gossip_rate\":{:.4},\"gossip_rate\":{:.4}}}",
@@ -142,7 +148,12 @@ mod tests {
 
     #[test]
     fn runners_emit_json() {
-        for body in [run_town(42), run_variance(42), run_coevolution(42), run_gossip(42)] {
+        for body in [
+            run_town(42),
+            run_variance(42),
+            run_coevolution(42),
+            run_gossip(42),
+        ] {
             crate::json::parse(&body).expect("runner output must be valid JSON");
         }
     }

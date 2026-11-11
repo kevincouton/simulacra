@@ -12,7 +12,11 @@ impl Rng {
     /// Seed the generator. A zero seed is remapped to the splitmix64
     /// constant so the state is never degenerate.
     pub fn seeded(seed: u64) -> Self {
-        let state = if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed };
+        let state = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
         Rng { state }
     }
 

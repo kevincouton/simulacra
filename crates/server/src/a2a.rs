@@ -31,7 +31,11 @@ pub struct Store {
 impl Store {
     /// In-memory store only (used by tests and as a fallback).
     pub fn new() -> RefCell<Self> {
-        RefCell::new(Self { tasks: HashMap::new(), next_id: 0, log: None })
+        RefCell::new(Self {
+            tasks: HashMap::new(),
+            next_id: 0,
+            log: None,
+        })
     }
 
     /// Load tasks from `path` (created if missing) and append new ones to
@@ -42,22 +46,40 @@ impl Store {
         let mut next_id = 0u64;
         if let Ok(contents) = std::fs::read_to_string(path) {
             for line in contents.lines() {
-                let Ok(task) = json::parse(line) else { continue };
-                let Some(id) = task.get("id").and_then(Json::as_str) else { continue };
-                if let Some(n) = id.strip_prefix("simulacra-task-").and_then(|s| s.parse::<u64>().ok()) {
+                let Ok(task) = json::parse(line) else {
+                    continue;
+                };
+                let Some(id) = task.get("id").and_then(Json::as_str) else {
+                    continue;
+                };
+                if let Some(n) = id
+                    .strip_prefix("simulacra-task-")
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
                     next_id = next_id.max(n);
                 }
                 tasks.insert(id.to_string(), task);
             }
         }
-        let log = match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let log = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             Ok(f) => Some(f),
             Err(e) => {
-                eprintln!("a2a task log {} not writable, tasks will not persist: {e}", path.display());
+                eprintln!(
+                    "a2a task log {} not writable, tasks will not persist: {e}",
+                    path.display()
+                );
                 None
             }
         };
-        RefCell::new(Self { tasks, next_id, log })
+        RefCell::new(Self {
+            tasks,
+            next_id,
+            log,
+        })
     }
 
     /// Store a task, inserting its freshly minted id as the first field.
@@ -226,10 +248,7 @@ fn message_send(store: &RefCell<Store>, id: &Json, params: &Json) -> Json {
     let user_msg = msg.clone();
     let agent_msg = Json::Obj(vec![
         ("role".into(), Json::str("agent")),
-        (
-            "parts".into(),
-            Json::Arr(vec![text_part(summary.clone())]),
-        ),
+        ("parts".into(), Json::Arr(vec![text_part(summary.clone())])),
         ("messageId".into(), Json::str("simulacra-reply")),
     ]);
     let task = Json::Obj(vec![
@@ -247,7 +266,10 @@ fn message_send(store: &RefCell<Store>, id: &Json, params: &Json) -> Json {
             Json::Arr(vec![Json::Obj(vec![
                 ("artifactId".into(), Json::str("simulacra-result")),
                 ("name".into(), Json::str("experiment-result")),
-                ("parts".into(), Json::Arr(vec![text_part(summary), data_part(data)])),
+                (
+                    "parts".into(),
+                    Json::Arr(vec![text_part(summary), data_part(data)]),
+                ),
             ])]),
         ),
         ("history".into(), Json::Arr(vec![user_msg, agent_msg])),
@@ -264,21 +286,37 @@ fn run_intent(text: &str) -> (String, Json) {
     let seed = extract_seed(&lower).unwrap_or(sim::DEFAULT_SEED);
     if lower.contains("gossip") {
         let data = json::parse(&sim::run_gossip(seed)).unwrap_or(Json::Null);
-        let a = data.get("no_gossip_rate").and_then(Json::as_f64).unwrap_or(f64::NAN);
-        let b = data.get("gossip_rate").and_then(Json::as_f64).unwrap_or(f64::NAN);
+        let a = data
+            .get("no_gossip_rate")
+            .and_then(Json::as_f64)
+            .unwrap_or(f64::NAN);
+        let b = data
+            .get("gossip_rate")
+            .and_then(Json::as_f64)
+            .unwrap_or(f64::NAN);
         (format!("Gossip experiment at seed {seed}: hidden-location success is {a:.4} without gossip and {b:.4} with gossip."), data)
     } else if lower.contains("variance") {
         let data = json::parse(&sim::run_variance(seed)).unwrap_or(Json::Null);
         let m = data.path(&["mean_match"]) == Some(&Json::Bool(true));
         let v = data.path(&["variance_match"]) == Some(&Json::Bool(true));
         (format!("Variance experiment at seed {seed}: empirical mean/variance match theory: mean={m}, variance={v}."), data)
-    } else if lower.contains("coevolution") || lower.contains("co-evolution") || lower.contains("synthesizer") {
+    } else if lower.contains("coevolution")
+        || lower.contains("co-evolution")
+        || lower.contains("synthesizer")
+    {
         let data = json::parse(&sim::run_coevolution(seed)).unwrap_or(Json::Null);
-        let n = data.get("rounds").and_then(Json::as_arr).map(|r| r.len()).unwrap_or(0);
+        let n = data
+            .get("rounds")
+            .and_then(Json::as_arr)
+            .map(|r| r.len())
+            .unwrap_or(0);
         (format!("Co-evolution at seed {seed}: ran {n} Synthesizer/Solver rounds; see the artifact for per-round success rates."), data)
     } else if lower.contains("town") || lower.contains("shop") || lower.contains("persona") {
         let data = json::parse(&sim::run_town(seed)).unwrap_or(Json::Null);
-        let rate = data.get("success_rate").and_then(Json::as_f64).unwrap_or(f64::NAN);
+        let rate = data
+            .get("success_rate")
+            .and_then(Json::as_f64)
+            .unwrap_or(f64::NAN);
         (format!("Town simulation at seed {seed}: success rate {rate:.4} across 5 worlds; see the artifact for per-agent results."), data)
     } else {
         let data = Json::Obj(vec![("seed".into(), Json::Num(seed as f64))]);
@@ -288,7 +326,11 @@ fn run_intent(text: &str) -> (String, Json) {
 
 fn extract_seed(lower: &str) -> Option<u64> {
     let pos = lower.find("seed")?;
-    let digits: String = lower[pos + 4..].chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = lower[pos + 4..]
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().ok()
 }
 
@@ -303,8 +345,16 @@ mod tests {
     #[test]
     fn card_is_valid_and_complete() {
         let card = json::parse(&agent_card()).unwrap();
-        assert_eq!(card.get("name").unwrap().as_str(), Some("Simulacra Research Agent"));
-        assert!(card.get("url").unwrap().as_str().unwrap().ends_with("/a2a/"));
+        assert_eq!(
+            card.get("name").unwrap().as_str(),
+            Some("Simulacra Research Agent")
+        );
+        assert!(card
+            .get("url")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .ends_with("/a2a/"));
         assert!(card.path(&["capabilities", "streaming"]) == Some(&Json::Bool(false)));
         assert!(card.get("skills").unwrap().as_arr().unwrap().len() >= 5);
     }
@@ -315,14 +365,34 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"please run gossip with seed 42"}]}}}"#;
         let res = json::parse(&handle(&root(), &store, req)).unwrap();
         let task = res.get("result").unwrap();
-        assert_eq!(task.path(&["status", "state"]).unwrap().as_str(), Some("completed"));
-        let text = task.path(&["status", "message", "parts", "0", "text"]).unwrap().as_str().unwrap();
-        assert!(text.contains("0.5000") || text.contains("gossip"), "unexpected summary: {text}");
-        assert!(task.path(&["artifacts", "0", "parts", "1", "data", "gossip_rate"]).is_some());
+        assert_eq!(
+            task.path(&["status", "state"]).unwrap().as_str(),
+            Some("completed")
+        );
+        let text = task
+            .path(&["status", "message", "parts", "0", "text"])
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(
+            text.contains("0.5000") || text.contains("gossip"),
+            "unexpected summary: {text}"
+        );
+        assert!(task
+            .path(&["artifacts", "0", "parts", "1", "data", "gossip_rate"])
+            .is_some());
         let id = task.get("id").unwrap().as_str().unwrap().to_string();
 
-        let res = json::parse(&handle(&root(), &store, &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tasks/get","params":{{"id":"{id}"}}}}"#))).unwrap();
-        assert_eq!(res.get("result").unwrap().get("id").unwrap().as_str(), Some(id.as_str()));
+        let res = json::parse(&handle(
+            &root(),
+            &store,
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tasks/get","params":{{"id":"{id}"}}}}"#),
+        ))
+        .unwrap();
+        assert_eq!(
+            res.get("result").unwrap().get("id").unwrap().as_str(),
+            Some(id.as_str())
+        );
     }
 
     #[test]
@@ -330,8 +400,15 @@ mod tests {
         let store = Store::new();
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"hello there"}]}}}"#;
         let res = json::parse(&handle(&root(), &store, req)).unwrap();
-        let text = res.path(&["result", "status", "message", "parts", "0", "text"]).unwrap().as_str().unwrap();
-        assert!(text.contains("variance"), "overview should list experiments: {text}");
+        let text = res
+            .path(&["result", "status", "message", "parts", "0", "text"])
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(
+            text.contains("variance"),
+            "overview should list experiments: {text}"
+        );
     }
 
     #[test]
@@ -351,7 +428,12 @@ mod tests {
         let store = Store::open(&log);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"run gossip seed 42"}]}}}"#;
         let res = json::parse(&handle(&root(), &store, req)).unwrap();
-        let id = res.path(&["result", "id"]).unwrap().as_str().unwrap().to_string();
+        let id = res
+            .path(&["result", "id"])
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
         drop(store);
 
         // Reopen from the log: the task must still be there, and new ids
@@ -363,11 +445,19 @@ mod tests {
             &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tasks/get","params":{{"id":"{id}"}}}}"#),
         ))
         .unwrap();
-        assert_eq!(res.path(&["result", "id"]).unwrap().as_str(), Some(id.as_str()));
+        assert_eq!(
+            res.path(&["result", "id"]).unwrap().as_str(),
+            Some(id.as_str())
+        );
 
         let req = r#"{"jsonrpc":"2.0","id":3,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"run town"}]}}}"#;
         let res = json::parse(&handle(&root(), &store, req)).unwrap();
-        let id2 = res.path(&["result", "id"]).unwrap().as_str().unwrap().to_string();
+        let id2 = res
+            .path(&["result", "id"])
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_ne!(id, id2);
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -379,7 +469,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let log = tmp.join("tasks.jsonl");
-        std::fs::write(&log, "not json\n{\"id\":\"simulacra-task-5\",\"kind\":\"task\"}\n").unwrap();
+        std::fs::write(
+            &log,
+            "not json\n{\"id\":\"simulacra-task-5\",\"kind\":\"task\"}\n",
+        )
+        .unwrap();
 
         let store = Store::open(&log);
         let res = json::parse(&handle(
@@ -393,7 +487,10 @@ mod tests {
         // New ids continue after the highest replayed id.
         let req = r#"{"jsonrpc":"2.0","id":2,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"hi"}]}}}"#;
         let res = json::parse(&handle(&root(), &store, req)).unwrap();
-        assert_eq!(res.path(&["result", "id"]).unwrap().as_str(), Some("simulacra-task-6"));
+        assert_eq!(
+            res.path(&["result", "id"]).unwrap().as_str(),
+            Some("simulacra-task-6")
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

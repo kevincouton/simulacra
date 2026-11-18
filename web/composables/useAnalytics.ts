@@ -1,4 +1,3 @@
-type PostHogClient = ReturnType<typeof import('posthog-js').default.init>
 
 export function useAnalytics() {
   const track = (event: string, properties?: Record<string, unknown>) => {

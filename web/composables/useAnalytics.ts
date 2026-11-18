@@ -5,6 +5,11 @@ export function useAnalytics() {
 
   const track = (event: string, properties?: Record<string, unknown>) => {
     $posthog?.()?.capture(event, properties)
+    try {
+      ;(window as any).umami?.track(event, properties)
+    } catch {
+      /* silent fail */
+    }
   }
 
   return { track }

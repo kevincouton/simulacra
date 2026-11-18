@@ -7,8 +7,6 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     public: {
-      posthogKey: process.env.NUXT_PUBLIC_POSTHOG_KEY || '',
-      posthogHost: process.env.NUXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com',
       umamiWebsiteId: process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '',
     },
   },

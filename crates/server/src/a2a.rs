@@ -1,32 +1,39 @@
 //! A2A (Agent2Agent) endpoint: a public agent at `/a2a/` plus its Agent Card
 //! at `/.well-known/agent.json` (also mirrored at `/a2a/agent.json`).
 //!
-//! JSON-RPC 2.0 methods: `message/send` maps a natural-language request onto
-//! one of the four experiments and returns a completed `Task` whose
-//! artifacts carry both a human-readable summary and the raw JSON result;
-//! `tasks/get` fetches a previously created task. Tasks persist across
-//! restarts in an append-only JSONL log (see [`Store::open`]).
+//! JSON-RPC 2.0 methods: `message/send` (`SendMessage` in v1) maps a
+//! natural-language request onto one of four experiments and returns a
+//! completed `Task` whose artifacts carry a summary and the raw JSON result;
+//! `tasks/get` (`GetTask` in v1) fetches a task. Tasks persist across restarts
+//! in a bounded JSONL log (see [`Store::open_with_limits`]). Appends are
+//! compacted atomically when the configured count or byte limit is exceeded.
 //! Streaming is not supported (the card advertises `streaming: false`).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::json::{self, Json};
 use crate::sim;
 
 pub const PROTOCOL_VERSION: &str = "0.3.0";
 pub const V1_PROTOCOL_VERSION: &str = "1.0";
+pub const DEFAULT_MAX_TASKS: usize = 1000;
+pub const DEFAULT_MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
-/// Task store backed by an append-only JSONL log. The server is
-/// single-threaded, so a `RefCell` map behind the listener loop is enough
-/// for the in-memory index; the log handle is append-only, one task per
-/// line (the serializer escapes newlines, so lines never break).
+/// Task store backed by a bounded JSONL log. The server is single-threaded,
+/// so a `RefCell` map behind the listener loop is enough for the in-memory
+/// index. New tasks are appended one per line; retention rewrites the newest
+/// tasks to a same-directory temporary file and atomically renames it.
 pub struct Store {
     tasks: HashMap<String, Json>,
+    order: Vec<String>,
     next_id: u64,
     log: Option<std::fs::File>,
+    log_path: Option<PathBuf>,
+    max_tasks: usize,
+    max_log_bytes: u64,
 }
 
 impl Store {
@@ -34,16 +41,30 @@ impl Store {
     pub fn new() -> RefCell<Self> {
         RefCell::new(Self {
             tasks: HashMap::new(),
+            order: Vec::new(),
             next_id: 0,
             log: None,
+            log_path: None,
+            max_tasks: DEFAULT_MAX_TASKS,
+            max_log_bytes: DEFAULT_MAX_LOG_BYTES,
         })
     }
 
-    /// Load tasks from `path` (created if missing) and append new ones to
-    /// it. Unreadable or corrupt lines are skipped, and a log that fails
-    /// to open degrades to in-memory-only operation.
+    /// Load tasks with the default retention limits. Unreadable or corrupt
+    /// lines are skipped, and an unwritable log degrades to memory-only use.
+    #[cfg(test)]
     pub fn open(path: &Path) -> RefCell<Self> {
+        Self::open_with_limits(path, DEFAULT_MAX_TASKS, DEFAULT_MAX_LOG_BYTES)
+    }
+
+    /// Load tasks from `path` and retain the newest `max_tasks` records,
+    /// subject to `max_log_bytes`. At least one valid task is retained so
+    /// task IDs remain monotonic; consequently the byte limit is a soft cap
+    /// for an oversized newest task. Failed compaction keeps all tasks and
+    /// leaves the original log untouched.
+    pub fn open_with_limits(path: &Path, max_tasks: usize, max_log_bytes: u64) -> RefCell<Self> {
         let mut tasks = HashMap::new();
+        let mut order = Vec::new();
         let mut next_id = 0u64;
         if let Ok(contents) = std::fs::read_to_string(path) {
             for line in contents.lines() {
@@ -59,7 +80,11 @@ impl Store {
                 {
                     next_id = next_id.max(n);
                 }
-                tasks.insert(id.to_string(), task);
+                let id = id.to_string();
+                if tasks.insert(id.clone(), task).is_some() {
+                    order.retain(|existing| existing != &id);
+                }
+                order.push(id);
             }
         }
         let log = match std::fs::OpenOptions::new()
@@ -76,11 +101,18 @@ impl Store {
                 None
             }
         };
-        RefCell::new(Self {
+        let log_path = log.as_ref().map(|_| path.to_path_buf());
+        let mut store = Self {
             tasks,
+            order,
             next_id,
             log,
-        })
+            log_path,
+            max_tasks: max_tasks.max(1),
+            max_log_bytes,
+        };
+        store.enforce_retention();
+        RefCell::new(store)
     }
 
     /// Store a task, inserting its freshly minted id as the first field.
@@ -96,12 +128,106 @@ impl Store {
             }
         }
         self.tasks.insert(id.clone(), task);
+        self.order.push(id.clone());
+        self.enforce_retention();
         id
     }
 
     fn get(&self, id: &str) -> Option<Json> {
         self.tasks.get(id).cloned()
     }
+
+    fn enforce_retention(&mut self) {
+        let retained_bytes = serialized_log_bytes(&self.tasks, &self.order);
+        let log_bytes = self
+            .log
+            .as_ref()
+            .and_then(|log| log.metadata().ok())
+            .map_or(retained_bytes, |metadata| {
+                metadata.len().max(retained_bytes)
+            });
+        if self.order.len() <= self.max_tasks && log_bytes <= self.max_log_bytes {
+            return;
+        }
+
+        let mut retained = self.order.clone();
+        let mut retained_bytes = retained_bytes;
+        while retained.len() > 1
+            && (retained.len() > self.max_tasks || retained_bytes > self.max_log_bytes)
+        {
+            let id = retained.remove(0);
+            if let Some(task) = self.tasks.get(&id) {
+                retained_bytes = retained_bytes.saturating_sub(task.to_string().len() as u64 + 1);
+            }
+        }
+
+        if let Some(path) = self.log_path.clone() {
+            match compact_log(&path, &self.tasks, &retained) {
+                Ok(log) => {
+                    self.log = Some(log);
+                    self.apply_retained(&retained);
+                }
+                Err(e) => eprintln!(
+                    "a2a task log compaction failed for {}: {e}; retaining original log",
+                    path.display()
+                ),
+            }
+        } else {
+            self.apply_retained(&retained);
+        }
+    }
+
+    fn apply_retained(&mut self, retained: &[String]) {
+        self.tasks.retain(|id, _| retained.contains(id));
+        self.order = retained.to_vec();
+    }
+}
+
+fn serialized_log_bytes(tasks: &HashMap<String, Json>, order: &[String]) -> u64 {
+    order.iter().fold(0u64, |total, id| {
+        total.saturating_add(
+            tasks
+                .get(id)
+                .map_or(0, |task| task.to_string().len() as u64 + 1),
+        )
+    })
+}
+
+fn compaction_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("a2a-tasks.jsonl");
+    path.with_file_name(format!(".{name}.{}.compact", std::process::id()))
+}
+
+fn compact_log(
+    path: &Path,
+    tasks: &HashMap<String, Json>,
+    retained: &[String],
+) -> std::io::Result<std::fs::File> {
+    let temporary = compaction_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .append(true)
+        .open(&temporary)?;
+    let result = (|| {
+        for id in retained {
+            if let Some(task) = tasks.get(id) {
+                writeln!(file, "{}", task.to_string())?;
+            }
+        }
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)?;
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
+        }
+        Ok(file)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 pub fn agent_card() -> String {
@@ -203,8 +329,8 @@ pub fn handle(_root: &Path, store: &RefCell<Store>, body: &str) -> String {
     let params = req.get("params").cloned().unwrap_or(Json::Null);
 
     match method {
-        "message/send" => message_send(store, &id, &params).to_string(),
-        "tasks/get" => match params.get("id").and_then(Json::as_str) {
+        "message/send" | "SendMessage" => message_send(store, &id, &params).to_string(),
+        "tasks/get" | "GetTask" => match params.get("id").and_then(Json::as_str) {
             Some(tid) => match store.borrow().get(tid) {
                 Some(task) => result(&id, task).to_string(),
                 None => error(id, -32001, "Task not found").to_string(),
@@ -228,11 +354,25 @@ pub fn handle_http(
     match version.unwrap_or("0.3") {
         "0.3" => (200, handle(root, store, body)),
         V1_PROTOCOL_VERSION => {
+            let is_send = json::parse(body)
+                .ok()
+                .and_then(|request| {
+                    request
+                        .get("method")
+                        .and_then(Json::as_str)
+                        .map(|method| matches!(method, "message/send" | "SendMessage"))
+                })
+                .unwrap_or(false);
             let response = handle(root, store, body);
             let mut parsed = json::parse(&response).unwrap_or(Json::Null);
             if let Json::Obj(pairs) = &mut parsed {
                 if let Some((_, task)) = pairs.iter_mut().find(|(key, _)| key == "result") {
-                    *task = task_v1(task.clone());
+                    let converted = task_v1(task.clone());
+                    *task = if is_send {
+                        Json::Obj(vec![("task".into(), converted)])
+                    } else {
+                        converted
+                    };
                 }
             }
             (200, parsed.to_string())
@@ -269,8 +409,12 @@ fn task_v1(task: Json) -> Json {
         return task;
     };
     pairs.retain(|(key, _)| key != "kind");
-    for (_, value) in &mut pairs {
-        convert_task_field(value);
+    for (key, value) in &mut pairs {
+        match key.as_str() {
+            "history" => convert_history(value),
+            "artifacts" => convert_artifacts(value),
+            _ => convert_task_field(value),
+        }
     }
     Json::Obj(pairs)
 }
@@ -297,30 +441,32 @@ fn convert_task_field(value: &mut Json) {
                 }
             }
             "message" => convert_message(field),
-            "history" => {
-                if let Json::Arr(messages) = field {
-                    for message in messages {
-                        convert_message(message);
-                    }
-                }
-            }
-            "artifacts" => {
-                if let Json::Arr(artifacts) = field {
-                    for artifact in artifacts {
-                        if let Some(parts) = artifact.get("parts").cloned() {
-                            let converted = convert_parts(&parts);
-                            if let Json::Obj(fields) = artifact {
-                                if let Some((_, current)) =
-                                    fields.iter_mut().find(|(key, _)| key == "parts")
-                                {
-                                    *current = converted;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            "history" => convert_history(field),
+            "artifacts" => convert_artifacts(field),
             _ => {}
+        }
+    }
+}
+
+fn convert_history(value: &mut Json) {
+    if let Json::Arr(messages) = value {
+        for message in messages {
+            convert_message(message);
+        }
+    }
+}
+
+fn convert_artifacts(value: &mut Json) {
+    if let Json::Arr(artifacts) = value {
+        for artifact in artifacts {
+            if let Some(parts) = artifact.get("parts").cloned() {
+                let converted = convert_parts(&parts);
+                if let Json::Obj(fields) = artifact {
+                    if let Some((_, current)) = fields.iter_mut().find(|(key, _)| key == "parts") {
+                        *current = converted;
+                    }
+                }
+            }
         }
     }
 }
@@ -329,6 +475,7 @@ fn convert_message(message: &mut Json) {
     let Json::Obj(pairs) = message else {
         return;
     };
+    pairs.retain(|(key, _)| key != "kind");
     if !pairs.iter().any(|(key, _)| key == "messageId") {
         pairs.push(("messageId".into(), Json::str("simulacra-request")));
     }
@@ -363,7 +510,7 @@ fn convert_parts(parts: &Json) -> Json {
                 Json::Obj(
                     fields
                         .iter()
-                        .filter(|(key, _)| key != "type")
+                        .filter(|(key, _)| key != "type" && key != "kind")
                         .cloned()
                         .collect(),
                 )
@@ -679,6 +826,102 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    fn send_task(store: &RefCell<Store>, text: &str) -> String {
+        let request = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"message/send","params":{{"message":{{"role":"user","parts":[{{"type":"text","text":"{text}"}}]}}}}}}"#
+        );
+        json::parse(&handle(&root(), store, &request))
+            .unwrap()
+            .path(&["result", "id"])
+            .and_then(Json::as_str)
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn count_retention_preserves_order_and_ids_across_restart() {
+        let tmp = std::env::temp_dir().join("simulacra-a2a-count-retention-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let log = tmp.join("tasks.jsonl");
+        let store = Store::open_with_limits(&log, 2, u64::MAX);
+        assert_eq!(send_task(&store, "run town seed 1"), "simulacra-task-1");
+        assert_eq!(send_task(&store, "run town seed 2"), "simulacra-task-2");
+        assert_eq!(send_task(&store, "run town seed 3"), "simulacra-task-3");
+        assert!(store.borrow().get("simulacra-task-1").is_none());
+        assert!(store.borrow().get("simulacra-task-2").is_some());
+        assert!(store.borrow().get("simulacra-task-3").is_some());
+        drop(store);
+
+        let contents = std::fs::read_to_string(&log).unwrap();
+        let persisted_ids: Vec<String> = contents
+            .lines()
+            .map(|line| {
+                json::parse(line)
+                    .unwrap()
+                    .get("id")
+                    .and_then(Json::as_str)
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(persisted_ids, ["simulacra-task-2", "simulacra-task-3"]);
+
+        let store = Store::open_with_limits(&log, 2, u64::MAX);
+        assert_eq!(send_task(&store, "run town seed 4"), "simulacra-task-4");
+        assert!(store.borrow().get("simulacra-task-2").is_none());
+        assert!(store.borrow().get("simulacra-task-3").is_some());
+        assert!(store.borrow().get("simulacra-task-4").is_some());
+        drop(store);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn byte_retention_keeps_oversized_newest_task_and_continues_ids() {
+        let tmp = std::env::temp_dir().join("simulacra-a2a-byte-retention-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let log = tmp.join("tasks.jsonl");
+        let store = Store::open_with_limits(&log, 1000, 1);
+        assert_eq!(send_task(&store, "run gossip seed 1"), "simulacra-task-1");
+        assert_eq!(send_task(&store, "run gossip seed 2"), "simulacra-task-2");
+        assert!(store.borrow().get("simulacra-task-1").is_none());
+        assert!(store.borrow().get("simulacra-task-2").is_some());
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
+        assert!(std::fs::metadata(&log).unwrap().len() > 1);
+        drop(store);
+
+        let store = Store::open_with_limits(&log, 1000, 1);
+        assert_eq!(send_task(&store, "run gossip seed 3"), "simulacra-task-3");
+        assert!(store.borrow().get("simulacra-task-2").is_none());
+        assert!(store.borrow().get("simulacra-task-3").is_some());
+        drop(store);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn failed_compaction_preserves_memory_and_original_log() {
+        let tmp = std::env::temp_dir().join("simulacra-a2a-atomic-retention-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let log = tmp.join("tasks.jsonl");
+        let store = Store::open_with_limits(&log, 1, u64::MAX);
+        assert_eq!(send_task(&store, "run town seed 1"), "simulacra-task-1");
+        std::fs::write(compaction_path(&log), "simulate an interrupted compaction").unwrap();
+        assert_eq!(send_task(&store, "run town seed 2"), "simulacra-task-2");
+        assert!(store.borrow().get("simulacra-task-1").is_some());
+        assert!(store.borrow().get("simulacra-task-2").is_some());
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 2);
+        std::fs::remove_file(compaction_path(&log)).unwrap();
+        drop(store);
+
+        let store = Store::open_with_limits(&log, 1, u64::MAX);
+        assert!(store.borrow().get("simulacra-task-1").is_none());
+        assert_eq!(send_task(&store, "run town seed 3"), "simulacra-task-3");
+        drop(store);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn v1_card_uses_supported_interfaces_and_mime_modes() {
         let card = json::parse(&agent_card_v1()).unwrap();
@@ -708,11 +951,11 @@ mod tests {
     #[test]
     fn v1_messages_and_retrieved_legacy_tasks_use_v1_shapes() {
         let store = Store::new();
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"ROLE_USER","messageId":"request-1","parts":[{"text":"run gossip seed 42"}]}}}"#;
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"request-1","parts":[{"text":"run gossip seed 42"}]}}}"#;
         let (status, response) = handle_http(&root(), &store, req, Some("1.0"));
         assert_eq!(status, 200);
         let res = json::parse(&response).unwrap();
-        let task = res.get("result").unwrap();
+        let task = res.path(&["result", "task"]).unwrap();
         assert!(task.get("kind").is_none());
         assert_eq!(
             task.path(&["status", "state"]).and_then(Json::as_str),
@@ -726,13 +969,24 @@ mod tests {
         assert!(task
             .path(&["status", "message", "parts", "0", "type"])
             .is_none());
+        assert_eq!(
+            task.path(&["history", "1", "role"]).and_then(Json::as_str),
+            Some("ROLE_AGENT")
+        );
+        assert!(task.path(&["history", "1", "parts", "0", "type"]).is_none());
+        assert!(task
+            .path(&["artifacts", "0", "parts", "0", "type"])
+            .is_none());
+        assert!(task
+            .path(&["artifacts", "0", "parts", "1", "type"])
+            .is_none());
         assert!(task
             .path(&["artifacts", "0", "parts", "1", "data", "gossip_rate"])
             .is_some());
         let id = task.get("id").and_then(Json::as_str).unwrap();
 
         // Create through the legacy API, then retrieve through v1.
-        let legacy_req = r#"{"jsonrpc":"2.0","id":2,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"run town"}]}}}"#;
+        let legacy_req = r#"{"jsonrpc":"2.0","id":2,"method":"message/send","params":{"message":{"kind":"message","role":"user","parts":[{"kind":"text","text":"run town"}]}}}"#;
         let legacy = json::parse(&handle(&root(), &store, legacy_req)).unwrap();
         let legacy_id = legacy
             .path(&["result", "id"])
@@ -740,7 +994,7 @@ mod tests {
             .unwrap();
         assert_ne!(id, legacy_id);
         let get = format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"tasks/get","params":{{"id":"{legacy_id}"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":3,"method":"GetTask","params":{{"id":"{legacy_id}"}}}}"#
         );
         let (_, response) = handle_http(&root(), &store, &get, Some("1.0"));
         let fetched = json::parse(&response).unwrap();
@@ -751,6 +1005,10 @@ mod tests {
             Some("TASK_STATE_COMPLETED")
         );
         assert!(fetched.path(&["result", "kind"]).is_none());
+        assert!(fetched.path(&["result", "history", "0", "kind"]).is_none());
+        assert!(fetched
+            .path(&["result", "history", "0", "parts", "0", "kind"])
+            .is_none());
     }
 
     #[test]

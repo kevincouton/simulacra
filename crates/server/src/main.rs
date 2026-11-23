@@ -17,7 +17,9 @@
 //!
 //! Single-threaded and std-only; it is a playground server, not a
 //! production one. Default bind: `127.0.0.1:31011` (override with
-//! `SIMULACRA_BIND`).
+//! `SIMULACRA_BIND`). A2A retention is controlled by
+//! `SIMULACRA_A2A_MAX_TASKS` (1000) and `SIMULACRA_A2A_MAX_LOG_BYTES`
+//! (10 MiB).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -41,11 +43,17 @@ fn main() {
         eprintln!("tracker rebuild failed: {e}");
         std::process::exit(1);
     }
-    // A2A tasks persist in an append-only JSONL log under data/ so they
-    // survive restarts; fall back to memory if the log cannot be created.
+    // A2A tasks persist in a bounded JSONL log under data/ so they survive
+    // restarts; fall back to memory if the log cannot be created.
+    let max_tasks = configured_limit("SIMULACRA_A2A_MAX_TASKS", a2a::DEFAULT_MAX_TASKS as u64);
+    let max_log_bytes = configured_limit("SIMULACRA_A2A_MAX_LOG_BYTES", a2a::DEFAULT_MAX_LOG_BYTES);
     let data_dir = root.join("data");
     let store = match std::fs::create_dir_all(&data_dir) {
-        Ok(()) => a2a::Store::open(&data_dir.join("a2a-tasks.jsonl")),
+        Ok(()) => a2a::Store::open_with_limits(
+            &data_dir.join("a2a-tasks.jsonl"),
+            usize::try_from(max_tasks).unwrap_or(usize::MAX),
+            max_log_bytes,
+        ),
         Err(e) => {
             eprintln!(
                 "cannot create {}, tasks will not persist: {e}",
@@ -71,6 +79,16 @@ fn main() {
             }
             Err(e) => eprintln!("accept error: {e}"),
         }
+    }
+}
+
+fn configured_limit(name: &str, default: u64) -> u64 {
+    match std::env::var(name) {
+        Ok(value) => value.parse().unwrap_or_else(|_| {
+            eprintln!("invalid {name}={value:?}; using default {default}");
+            default
+        }),
+        Err(_) => default,
     }
 }
 

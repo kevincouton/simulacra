@@ -52,21 +52,30 @@ Send it with headers `MCP-Protocol-Version: 2026-07-28`,
 The same experiments are also an A2A agent. Send a natural-language
 `message/send` — "run gossip seed 7" — and it replies with a completed Task
 whose artifacts carry both a human-readable summary and the raw JSON result.
-`tasks/get` retrieves a task by id; tasks persist across restarts in an
-append-only JSONL log.
+`tasks/get` retrieves a task by id; tasks persist across restarts in a
+bounded JSONL log. `SIMULACRA_A2A_MAX_TASKS` sets the maximum task count
+(default 1000), and `SIMULACRA_A2A_MAX_LOG_BYTES` sets the target log size
+(default 10 MiB). When either limit is exceeded, the newest tasks are
+retained in their original order through same-directory atomic compaction.
+Task IDs continue increasing after compaction and restart. At least the
+newest valid task is always retained, so the byte limit is a soft cap if
+that task alone is larger. A failed compaction leaves the original log and
+all in-memory tasks intact.
 
 A2A 0.3 remains available at `/a2a/` with its original card and task shape.
 A2A 1.0 is served in parallel at `/a2a/v1`; send `A2A-Version: 1.0` and use
-uppercase roles and task states, MIME media modes, and wrapper-only text or
-data parts. The server converts persisted legacy tasks at the boundary, so
-either protocol version can retrieve them.
+`SendMessage`/`GetTask` (the legacy method names remain accepted), uppercase
+roles and task states, MIME media modes, and wrapper-only text or data parts.
+`SendMessage` returns the standard `result.task` envelope; `GetTask` returns
+a task directly. The server converts persisted legacy tasks at the boundary,
+so either protocol version can retrieve them.
 
 - Legacy agent card: `https://simulation.lucanian.app/.well-known/agent.json`
 - A2A 1.0 agent card: `https://simulation.lucanian.app/.well-known/agent-card.json`
 - Legacy endpoint: `https://simulation.lucanian.app/a2a/`
 - A2A 1.0 endpoint: `https://simulation.lucanian.app/a2a/v1`
 - Legacy curl: `curl -s https://simulation.lucanian.app/a2a/ -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"run variance seed 42"}]}}}'`
-- A2A 1.0 curl: `curl -s https://simulation.lucanian.app/a2a/v1 -H 'content-type: application/json' -H 'A2A-Version: 1.0' -d '{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"ROLE_USER","messageId":"request-1","parts":[{"text":"run variance seed 42"}]}}}'`
+- A2A 1.0 curl: `curl -s https://simulation.lucanian.app/a2a/v1 -H 'content-type: application/json' -H 'A2A-Version: 1.0' -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"request-1","parts":[{"text":"run variance seed 42"}]}}}'`
 
 ## Plain JSON API
 

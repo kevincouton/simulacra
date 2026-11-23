@@ -99,24 +99,25 @@ test('A2A 1.0 card and tasks use current shapes without breaking 0.3 retrieval',
   })
   expect(sentResponse.status()).toBe(200)
   const sent = await sentResponse.json()
-  expect(sent.result.kind).toBeUndefined()
-  expect(sent.result.status.state).toBe('TASK_STATE_COMPLETED')
-  expect(sent.result.status.message.role).toBe('ROLE_AGENT')
-  expect(sent.result.status.message.parts[0].type).toBeUndefined()
-  expect(sent.result.artifacts[0].parts[1].data).toEqual(
+  const sentTask = sent.result.task
+  expect(sentTask.kind).toBeUndefined()
+  expect(sentTask.status.state).toBe('TASK_STATE_COMPLETED')
+  expect(sentTask.status.message.role).toBe('ROLE_AGENT')
+  expect(sentTask.status.message.parts[0].type).toBeUndefined()
+  expect(sentTask.artifacts[0].parts[1].data).toEqual(
     await (await request.get('/api/gossip?seed=42')).json(),
   )
 
   const fetchedResponse = await request.post('/a2a/v1', {
     headers: { 'A2A-Version': '1.0' },
-    data: { jsonrpc: '2.0', id: 31, method: 'tasks/get', params: { id: sent.result.id } },
+    data: { jsonrpc: '2.0', id: 31, method: 'GetTask', params: { id: sentTask.id } },
   })
   const fetched = await fetchedResponse.json()
-  expect(fetched.result.id).toBe(sent.result.id)
+  expect(fetched.result.id).toBe(sentTask.id)
   expect(fetched.result.status.state).toBe('TASK_STATE_COMPLETED')
 
   const legacyResponse = await request.post('/a2a/', {
-    data: { jsonrpc: '2.0', id: 32, method: 'tasks/get', params: { id: sent.result.id } },
+    data: { jsonrpc: '2.0', id: 32, method: 'tasks/get', params: { id: sentTask.id } },
   })
   const legacy = await legacyResponse.json()
   expect(legacy.result.kind).toBe('task')

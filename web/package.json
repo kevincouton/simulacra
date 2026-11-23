@@ -6,14 +6,18 @@
     "build": "nuxi build",
     "dev": "nuxi dev",
     "preview": "nuxi preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "typecheck": "nuxi prepare && vue-tsc --noEmit -p .nuxt/tsconfig.json"
   },
   "dependencies": {
-    "nuxt": "^3.13.0",
-    "vue": "^3.5.0",
-    "vue-router": "^4.4.0"
+    "nuxt": "^4.6.4",
+    "vue": "^3.5.46",
+    "vue-router": "^4.6.5"
   },
   "devDependencies": {
-    "@playwright/test": "^1.48.0"
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^26.6.6",
+    "typescript": "~5.9.3",
+    "vue-tsc": "^3.3.14"
   }
 }

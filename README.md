@@ -17,7 +17,7 @@ ambitious human simulation, 10% worse but 100x cheaper and 10,000x faster.
 | `simulacra-demo` | Playground CLI: `town` (default), `variance`, `coevolution`, `gossip` subcommands. |
 | `simulacra-server` | std-only HTTP server: JSON API (`/api/town`, `/api/variance`, `/api/coevolution`, `/api/gossip`) plus the built web UI. Binds `127.0.0.1:8787` by default. |
 | `simulacra-tracker` | Static research-site generator over `content/` (the stages of the synthetic-simulation stack + limits + market pages). |
-| `web/` | Nuxt 3 client-side UI for the playground; `npx nuxi build` emits `web/.output/public`, served by `simulacra-server`. |
+| `web/` | Nuxt 4 client-side UI for the playground; `npx nuxi build` emits `web/.output/public`, served by `simulacra-server`. |
 
 ## Quick start
 

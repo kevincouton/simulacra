@@ -10,6 +10,12 @@ demand. That's the layer Simile is replacing.
   from two-hour biographical interviews reproduced their source humans'
   survey and behavioral responses 85% as accurately as the humans
   reproduced themselves two weeks later.
+- **[Behavioral History Outperforms Descriptions of the Person](https://arxiv.org/abs/2610.03998)** —
+  an 845-person, two-wave panel found description-based personas recovered
+  53–67% of human between-person variation, while behavioral history
+  approximately restored it. Individual-level informedness rose from 7–12%
+  to 28% of human test–retest: observed behavior carries information that a
+  biographical summary leaves behind.
 - **Simile** — post-trains on interviews, transaction data, and registered
   RCTs from the Open Science Framework specifically to recover human bias,
   inconsistency, and causal texture, and reports early scaling laws for

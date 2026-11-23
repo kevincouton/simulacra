@@ -2,8 +2,9 @@
 
 Human simulation, stage by stage. If you squint, what we used to call
 "synthetic data", "synthetic rubrics", "AI researcher", and "end-to-end RL
-environments" is one trend: **increasingly ambitious human simulation** —
-10% worse, but 100x cheaper and 10,000x faster.
+environments" is one trend: **increasingly ambitious human simulation**.
+The promise is dramatic gains in cost and speed; the fidelity penalty is not
+a universal constant and must be measured for each population and decision.
 
 Each stage below replaced one more human role in the training loop with a
 model. The remaining human roles narrow as the loop closes on itself.
@@ -19,11 +20,11 @@ model. The remaining human roles narrow as the loop closes on itself.
 - [Where simulation breaks](09-limits.html) — the 2026 skeptical correction (variance, tails, lived experience)
 - [From papers to procurement](10-market.html) — NIH grand challenges, buyer's guides, vendor directories (Sept 2026)
 
-*Updated October 2026: stage 6 extended with co-evolution; new page on
-institutionalization; the playground gained a Synthesizer/Solver
-co-evolution mode, a gossip/social layer, tail-fidelity sampling, a
-feature-gated real LLM adapter, and a web UI served by a small Rust
-server.*
+*Updated November 2026: CrossEnv connects executable environments into
+verifiable cross-environment tasks; new panel evidence compares behavioral
+histories with description-only personas; and the limits page now covers
+context-specific behavior and graded cognitive diversity. The playground
+retains its deterministic, offline-by-default Rust implementation.*
 
 This tracker ships with **Simulacra**, a Rust workspace that prototypes the
 pipeline: synthesized environments, synthesized binary verifiers with
@@ -38,8 +39,9 @@ The trend of replacing each human role in the AI training loop — judge,
 data labeler, teacher, curriculum designer, researcher, environment
 builder, and research subject — with a model. Synthetic data, synthetic
 rubrics, AI researchers, and end-to-end RL environments are all instances
-of the same idea: simulation that is roughly 10% worse than the human
-original but 100x cheaper and 10,000x faster.
+of the same idea. Vendors often promise large cost and speed advantages,
+but neither those gains nor the fidelity trade-off generalize without
+measurement against the target human population and task.
 
 ### What are the stages of the synthetic simulation stack?
 
@@ -73,9 +75,9 @@ check simulated populations against theory.
 ### Does Simulacra expose machine-readable endpoints?
 
 Yes. The same Rust server exposes the experiments as an MCP tool server at
-`/mcp` (tools: run_town, run_variance, run_coevolution, run_gossip,
-list_stages, get_stage), as an A2A agent whose card lives at
-`/.well-known/agent.json` with the JSON-RPC endpoint at `/a2a/`, and as
-plain JSON under `/api/`. All endpoints are public, unauthenticated, and
-seeded, so every result is reproducible. See the
+`/mcp` (protocols 2025-06-18 and 2026-07-28; tools: run_town, run_variance,
+run_coevolution, run_gossip, list_stages, get_stage), as A2A 0.3 at `/a2a/`
+and A2A 1.0 at `/a2a/v1`, and as plain JSON under `/api/`. Legacy and current
+agent cards remain available under `/.well-known/`. All endpoints are public,
+unauthenticated, and seeded, so every result is reproducible. See the
 [Agents & API](agents.html) page.

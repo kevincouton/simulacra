@@ -40,6 +40,11 @@ agent":
   (e.g. RL List, Oct 2026) and funded startups selling simulation sandboxes
   for benchmarking and training agents before deployment. Environment
   synthesis is a procurement category now, not just a paper topic.
+- **[CrossEnv](https://arxiv.org/abs/2611.22777)** (November 17, 2026) —
+  entity-tool graphs connect separate environments into executable,
+  verifiable cross-environment tasks. Its curriculum progresses from
+  single-environment tool use to cross-domain coordination and user
+  interaction, making composition itself part of the training problem.
 
 The gym, the referee, and the scoreboard are all models now — the referee
 is getting its own theory, and the gym has started fighting back.

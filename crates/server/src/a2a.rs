@@ -17,6 +17,7 @@ use crate::json::{self, Json};
 use crate::sim;
 
 pub const PROTOCOL_VERSION: &str = "0.3.0";
+pub const V1_PROTOCOL_VERSION: &str = "1.0";
 
 /// Task store backed by an append-only JSONL log. The server is
 /// single-threaded, so a `RefCell` map behind the listener loop is enough
@@ -164,6 +165,33 @@ pub fn agent_card() -> String {
     .to_string()
 }
 
+/// A2A 1.0 discovery card. The 0.3 card remains available unchanged.
+pub fn agent_card_v1() -> String {
+    let mut card = json::parse(&agent_card()).unwrap_or(Json::Null);
+    if let Json::Obj(pairs) = &mut card {
+        pairs.retain(|(key, _)| {
+            !matches!(key.as_str(), "protocolVersion" | "url" | "authentication")
+        });
+        for (key, value) in pairs.iter_mut() {
+            if key == "defaultInputModes" || key == "defaultOutputModes" {
+                *value = Json::Arr(vec![Json::str("text/plain")]);
+            }
+        }
+        pairs.push((
+            "supportedInterfaces".into(),
+            Json::Arr(vec![Json::Obj(vec![
+                (
+                    "url".into(),
+                    Json::str(format!("{}/a2a/v1", simulacra_tracker::BASE_URL)),
+                ),
+                ("protocolBinding".into(), Json::str("JSONRPC")),
+                ("protocolVersion".into(), Json::str(V1_PROTOCOL_VERSION)),
+            ])]),
+        ));
+    }
+    card.to_string()
+}
+
 /// Handle one A2A JSON-RPC request body; always returns a response string.
 pub fn handle(_root: &Path, store: &RefCell<Store>, body: &str) -> String {
     let req = match json::parse(body) {
@@ -186,6 +214,162 @@ pub fn handle(_root: &Path, store: &RefCell<Store>, body: &str) -> String {
         "" => error(id, -32600, "Invalid Request").to_string(),
         _ => error(id, -32601, &format!("Method not found: {method}")).to_string(),
     }
+}
+
+/// Select the representation from `A2A-Version`. Absence means 0.3, as
+/// required by the specification; v1 tasks are converted at the boundary so
+/// existing persisted tasks and legacy clients keep working.
+pub fn handle_http(
+    root: &Path,
+    store: &RefCell<Store>,
+    body: &str,
+    version: Option<&str>,
+) -> (u16, String) {
+    match version.unwrap_or("0.3") {
+        "0.3" => (200, handle(root, store, body)),
+        V1_PROTOCOL_VERSION => {
+            let response = handle(root, store, body);
+            let mut parsed = json::parse(&response).unwrap_or(Json::Null);
+            if let Json::Obj(pairs) = &mut parsed {
+                if let Some((_, task)) = pairs.iter_mut().find(|(key, _)| key == "result") {
+                    *task = task_v1(task.clone());
+                }
+            }
+            (200, parsed.to_string())
+        }
+        requested => {
+            let id = json::parse(body)
+                .ok()
+                .and_then(|req| req.get("id").cloned())
+                .unwrap_or(Json::Null);
+            let mut response = error(id, -32009, "A2A version not supported");
+            if let Json::Obj(pairs) = &mut response {
+                if let Some((_, Json::Obj(fields))) =
+                    pairs.iter_mut().find(|(key, _)| key == "error")
+                {
+                    fields.push((
+                        "data".into(),
+                        Json::Obj(vec![
+                            (
+                                "supported".into(),
+                                Json::Arr(vec![Json::str("0.3"), Json::str(V1_PROTOCOL_VERSION)]),
+                            ),
+                            ("requested".into(), Json::str(requested)),
+                        ]),
+                    ));
+                }
+            }
+            (400, response.to_string())
+        }
+    }
+}
+
+fn task_v1(task: Json) -> Json {
+    let Json::Obj(mut pairs) = task else {
+        return task;
+    };
+    pairs.retain(|(key, _)| key != "kind");
+    for (_, value) in &mut pairs {
+        convert_task_field(value);
+    }
+    Json::Obj(pairs)
+}
+
+fn convert_task_field(value: &mut Json) {
+    let Json::Obj(pairs) = value else {
+        return;
+    };
+    for (key, field) in pairs {
+        match key.as_str() {
+            "state" => {
+                if let Some(state) = field.as_str() {
+                    *field = Json::str(match state {
+                        "completed" => "TASK_STATE_COMPLETED",
+                        "failed" => "TASK_STATE_FAILED",
+                        "canceled" => "TASK_STATE_CANCELED",
+                        "rejected" => "TASK_STATE_REJECTED",
+                        "working" => "TASK_STATE_WORKING",
+                        "submitted" => "TASK_STATE_SUBMITTED",
+                        "input-required" => "TASK_STATE_INPUT_REQUIRED",
+                        "auth-required" => "TASK_STATE_AUTH_REQUIRED",
+                        other => other,
+                    });
+                }
+            }
+            "message" => convert_message(field),
+            "history" => {
+                if let Json::Arr(messages) = field {
+                    for message in messages {
+                        convert_message(message);
+                    }
+                }
+            }
+            "artifacts" => {
+                if let Json::Arr(artifacts) = field {
+                    for artifact in artifacts {
+                        if let Some(parts) = artifact.get("parts").cloned() {
+                            let converted = convert_parts(&parts);
+                            if let Json::Obj(fields) = artifact {
+                                if let Some((_, current)) =
+                                    fields.iter_mut().find(|(key, _)| key == "parts")
+                                {
+                                    *current = converted;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn convert_message(message: &mut Json) {
+    let Json::Obj(pairs) = message else {
+        return;
+    };
+    if !pairs.iter().any(|(key, _)| key == "messageId") {
+        pairs.push(("messageId".into(), Json::str("simulacra-request")));
+    }
+    for (key, field) in pairs {
+        match key.as_str() {
+            "role" => {
+                if let Some(role) = field.as_str() {
+                    *field = Json::str(match role {
+                        "user" => "ROLE_USER",
+                        "agent" => "ROLE_AGENT",
+                        other => other,
+                    });
+                }
+            }
+            "parts" => *field = convert_parts(field),
+            _ => {}
+        }
+    }
+}
+
+fn convert_parts(parts: &Json) -> Json {
+    let Json::Arr(items) = parts else {
+        return parts.clone();
+    };
+    Json::Arr(
+        items
+            .iter()
+            .map(|part| {
+                let Json::Obj(fields) = part else {
+                    return part.clone();
+                };
+                Json::Obj(
+                    fields
+                        .iter()
+                        .filter(|(key, _)| key != "type")
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn result(id: &Json, res: Json) -> Json {
@@ -493,5 +677,101 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn v1_card_uses_supported_interfaces_and_mime_modes() {
+        let card = json::parse(&agent_card_v1()).unwrap();
+        assert_eq!(
+            card.path(&["supportedInterfaces", "0", "protocolVersion"])
+                .and_then(Json::as_str),
+            Some("1.0")
+        );
+        assert_eq!(
+            card.path(&["supportedInterfaces", "0", "protocolBinding"])
+                .and_then(Json::as_str),
+            Some("JSONRPC")
+        );
+        assert!(card
+            .path(&["supportedInterfaces", "0", "url"])
+            .and_then(Json::as_str)
+            .unwrap()
+            .ends_with("/a2a/v1"));
+        assert_eq!(
+            card.path(&["defaultInputModes", "0"])
+                .and_then(Json::as_str),
+            Some("text/plain")
+        );
+        assert!(card.get("protocolVersion").is_none());
+    }
+
+    #[test]
+    fn v1_messages_and_retrieved_legacy_tasks_use_v1_shapes() {
+        let store = Store::new();
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"ROLE_USER","messageId":"request-1","parts":[{"text":"run gossip seed 42"}]}}}"#;
+        let (status, response) = handle_http(&root(), &store, req, Some("1.0"));
+        assert_eq!(status, 200);
+        let res = json::parse(&response).unwrap();
+        let task = res.get("result").unwrap();
+        assert!(task.get("kind").is_none());
+        assert_eq!(
+            task.path(&["status", "state"]).and_then(Json::as_str),
+            Some("TASK_STATE_COMPLETED")
+        );
+        assert_eq!(
+            task.path(&["status", "message", "role"])
+                .and_then(Json::as_str),
+            Some("ROLE_AGENT")
+        );
+        assert!(task
+            .path(&["status", "message", "parts", "0", "type"])
+            .is_none());
+        assert!(task
+            .path(&["artifacts", "0", "parts", "1", "data", "gossip_rate"])
+            .is_some());
+        let id = task.get("id").and_then(Json::as_str).unwrap();
+
+        // Create through the legacy API, then retrieve through v1.
+        let legacy_req = r#"{"jsonrpc":"2.0","id":2,"method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"run town"}]}}}"#;
+        let legacy = json::parse(&handle(&root(), &store, legacy_req)).unwrap();
+        let legacy_id = legacy
+            .path(&["result", "id"])
+            .and_then(Json::as_str)
+            .unwrap();
+        assert_ne!(id, legacy_id);
+        let get = format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"tasks/get","params":{{"id":"{legacy_id}"}}}}"#
+        );
+        let (_, response) = handle_http(&root(), &store, &get, Some("1.0"));
+        let fetched = json::parse(&response).unwrap();
+        assert_eq!(
+            fetched
+                .path(&["result", "status", "state"])
+                .and_then(Json::as_str),
+            Some("TASK_STATE_COMPLETED")
+        );
+        assert!(fetched.path(&["result", "kind"]).is_none());
+    }
+
+    #[test]
+    fn unsupported_a2a_version_has_protocol_error() {
+        let store = Store::new();
+        let (status, response) = handle_http(
+            &root(),
+            &store,
+            r#"{"jsonrpc":"2.0","id":9,"method":"tasks/get","params":{"id":"x"}}"#,
+            Some("2.0"),
+        );
+        assert_eq!(status, 400);
+        let res = json::parse(&response).unwrap();
+        assert_eq!(
+            res.path(&["error", "code"]).and_then(Json::as_f64),
+            Some(-32009.0)
+        );
+        assert_eq!(
+            res.path(&["error", "data", "requested"])
+                .and_then(Json::as_str),
+            Some("2.0")
+        );
     }
 }

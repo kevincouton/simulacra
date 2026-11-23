@@ -10,8 +10,9 @@
 //! - `/api/gossip?seed=42` — hidden-location runs with and without gossip
 //! - `POST /mcp` — MCP (Model Context Protocol) JSON-RPC endpoint exposing
 //!   the experiments as tools (stateless streamable HTTP)
-//! - `GET /.well-known/agent.json`, `GET /a2a/agent.json` — the A2A agent
-//!   card; `POST /a2a/` — A2A (Agent2Agent) JSON-RPC endpoint
+//! - `GET /.well-known/agent.json`, `GET /a2a/agent.json` — the legacy A2A
+//!   card; `GET /.well-known/agent-card.json` — the A2A 1.0 card
+//! - `POST /a2a/` and `POST /a2a/v1` — A2A 0.3 and 1.0 JSON-RPC endpoints
 //! - `/app/*` — the Nuxt playground UI from `web/.output/public`
 //!
 //! Single-threaded and std-only; it is a playground server, not a
@@ -19,6 +20,7 @@
 //! `SIMULACRA_BIND`).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -103,7 +105,13 @@ fn handle(
     root: &std::path::Path,
     store: &RefCell<a2a::Store>,
 ) -> std::io::Result<()> {
-    let Some((method, target, body)) = read_request(&mut stream)? else {
+    let Some(Request {
+        method,
+        target,
+        body,
+        headers,
+    }) = read_request(&mut stream)?
+    else {
         return respond(&mut stream, 400, "text/plain", "bad request", "");
     };
 
@@ -117,7 +125,7 @@ fn handle(
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(sim::DEFAULT_SEED);
 
-    const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type, mcp-session-id\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+    const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, a2a-version\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
     match (method.as_str(), path) {
         ("GET", "/api/town") => respond(
             &mut stream,
@@ -147,23 +155,23 @@ fn handle(
             &sim::run_gossip(seed),
             "",
         ),
-        ("POST", "/mcp") => respond(
-            &mut stream,
-            200,
-            "application/json",
-            &mcp::handle(root, &body),
-            CORS,
-        ),
-        ("POST", "/a2a") | ("POST", "/a2a/") => respond(
-            &mut stream,
-            200,
-            "application/json",
-            &a2a::handle(root, store, &body),
-            CORS,
-        ),
-        ("OPTIONS", "/mcp") | ("OPTIONS", "/a2a") | ("OPTIONS", "/a2a/") => {
-            respond(&mut stream, 204, "text/plain", "", CORS)
+        ("POST", "/mcp") => {
+            let (status, response) = mcp::handle_http(root, &body, &headers);
+            respond(&mut stream, status, "application/json", &response, CORS)
         }
+        ("POST", "/a2a") | ("POST", "/a2a/") | ("POST", "/a2a/v1") => {
+            let (status, response) = a2a::handle_http(
+                root,
+                store,
+                &body,
+                headers.get("a2a-version").map(String::as_str),
+            );
+            respond(&mut stream, status, "application/json", &response, CORS)
+        }
+        ("OPTIONS", "/mcp")
+        | ("OPTIONS", "/a2a")
+        | ("OPTIONS", "/a2a/")
+        | ("OPTIONS", "/a2a/v1") => respond(&mut stream, 204, "text/plain", "", CORS),
         ("GET", "/.well-known/agent.json") | ("GET", "/a2a/agent.json") => respond(
             &mut stream,
             200,
@@ -171,6 +179,16 @@ fn handle(
             &a2a::agent_card(),
             CORS,
         ),
+        ("GET", "/.well-known/agent-card.json") => respond(
+            &mut stream,
+            200,
+            "application/json",
+            &a2a::agent_card_v1(),
+            CORS,
+        ),
+        ("GET", "/mcp") | ("DELETE", "/mcp") => {
+            respond(&mut stream, 405, "text/plain", "method not allowed", CORS)
+        }
         ("GET", "/healthz") => respond(&mut stream, 200, "text/plain", "ok", ""),
         ("GET", _) => serve_static(&mut stream, root, path),
         // Known GET-only routes get 405; genuinely unknown paths get 404
@@ -190,7 +208,14 @@ fn handle(
 
 /// Read one HTTP request: headers up to `\r\n\r\n`, then the body per
 /// Content-Length. Returns `Ok(None)` on a malformed or over-long request.
-fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<(String, String, String)>> {
+struct Request {
+    method: String,
+    target: String,
+    body: String,
+    headers: HashMap<String, String>,
+}
+
+fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
     let header_end = loop {
@@ -209,11 +234,16 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<(String, Strin
     let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
     let mut lines = head.lines();
     let request_line = lines.next().unwrap_or("").to_string();
-    let content_length = lines
-        .filter_map(|l| l.split_once(':'))
-        .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, v)| v.trim().parse::<usize>().ok())
-        .unwrap_or(0);
+    let mut content_length = 0;
+    let mut headers = HashMap::new();
+    for (key, value) in lines.filter_map(|line| line.split_once(':')) {
+        let key = key.trim().to_ascii_lowercase();
+        let value = value.trim().to_string();
+        if key == "content-length" {
+            content_length = value.parse::<usize>().unwrap_or(0);
+        }
+        headers.insert(key, value);
+    }
     while buf.len() < header_end + content_length {
         let n = stream.read(&mut chunk)?;
         if n == 0 {
@@ -229,7 +259,12 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<(String, Strin
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let target = parts.next().unwrap_or("/").to_string();
-    Ok(Some((method, target, body)))
+    Ok(Some(Request {
+        method,
+        target,
+        body,
+        headers,
+    }))
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {

@@ -18,6 +18,25 @@ A simulated population that gets the mean right and the tails wrong is not
 a cheaper focus group; it is a different instrument that happens to share a
 mean.
 
+## Context and construct validity
+
+A faithful-looking persona can still be the wrong instrument for a new
+situation:
+
+- **[Personas Are Not People](https://arxiv.org/abs/2611.05292)** (November
+  2026) finds fixed personas cannot reproduce context-specific population
+  behavior; making the persona description richer does not, by itself, solve
+  the problem.
+- **[Evaluating Graded Cognitive Diversity](https://arxiv.org/abs/2611.10508)**
+  compares 473 adults with seven full-battery runs across four models.
+  Self-reported traits transferred better than reasoning and error
+  distributions or downstream behavior, so matching survey-style traits is
+  not evidence of matching cognition.
+
+The implication is uncomfortable but useful: validation must target the
+behavior and context being simulated, not merely the persona inputs or an
+aggregate score on a different task.
+
 ## Model collapse moves downstream
 
 The collapse argument — models trained on model output regress toward the

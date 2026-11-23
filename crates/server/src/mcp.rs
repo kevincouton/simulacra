@@ -7,30 +7,51 @@
 //! same four experiments as `/api/*` plus read access to the stage
 //! documents behind the research tracker.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::json::{self, Json};
 use crate::sim;
 
-pub const PROTOCOL_VERSION: &str = "2025-06-18";
+pub const LEGACY_PROTOCOL_VERSION: &str = "2025-06-18";
+pub const PROTOCOL_VERSION: &str = "2026-07-28";
 pub const SERVER_NAME: &str = "simulacra";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
+const CAPABILITIES_META: &str = "io.modelcontextprotocol/clientCapabilities";
+const SERVER_INFO_META: &str = "io.modelcontextprotocol/serverInfo";
 
-/// Handle one MCP request body; always returns a JSON-RPC response string.
+/// Handle a legacy request in unit tests.
+#[cfg(test)]
 pub fn handle(root: &Path, body: &str) -> String {
+    handle_http(root, body, &HashMap::new()).1
+}
+
+/// Handle one MCP request and return its HTTP status and JSON-RPC body.
+/// Requests carrying modern `_meta` use 2026-07-28 semantics; all others
+/// retain the 2025-06-18 initialize/tools behavior.
+pub fn handle_http(root: &Path, body: &str, headers: &HashMap<String, String>) -> (u16, String) {
     let req = match json::parse(body) {
         Ok(r) => r,
-        Err(_) => return error(Json::Null, -32700, "Parse error").to_string(),
+        Err(_) => return (200, error(Json::Null, -32700, "Parse error").to_string()),
     };
     let id = req.get("id").cloned().unwrap_or(Json::Null);
     let method = req.get("method").and_then(Json::as_str).unwrap_or("");
     let params = req.get("params").cloned().unwrap_or(Json::Null);
+    let modern_version = params
+        .get("_meta")
+        .and_then(|m| m.get(VERSION_META))
+        .and_then(Json::as_str);
 
-    match method {
+    if let Some(version) = modern_version {
+        return handle_modern(root, &id, method, &params, version, headers);
+    }
+
+    let response = match method {
         "initialize" => result(
             &id,
             Json::Obj(vec![
-                ("protocolVersion".into(), Json::str(PROTOCOL_VERSION)),
+                ("protocolVersion".into(), Json::str(LEGACY_PROTOCOL_VERSION)),
                 (
                     "capabilities".into(),
                     Json::Obj(vec![("tools".into(), Json::Obj(vec![]))]),
@@ -43,14 +64,164 @@ pub fn handle(root: &Path, body: &str) -> String {
                     ]),
                 ),
             ]),
-        )
-        .to_string(),
-        "ping" => result(&id, Json::Obj(vec![])).to_string(),
-        "tools/list" => result(&id, Json::Obj(vec![("tools".into(), tools(root))])).to_string(),
-        "tools/call" => tools_call(root, &id, &params).to_string(),
-        "" => error(id, -32600, "Invalid Request").to_string(),
-        _ => error(id, -32601, &format!("Method not found: {method}")).to_string(),
+        ),
+        "ping" => result(&id, Json::Obj(vec![])),
+        "tools/list" => result(&id, Json::Obj(vec![("tools".into(), tools(root))])),
+        "tools/call" => tools_call(root, &id, &params),
+        "" => error(id, -32600, "Invalid Request"),
+        _ => error(id, -32601, &format!("Method not found: {method}")),
+    };
+    (200, response.to_string())
+}
+
+fn handle_modern(
+    root: &Path,
+    id: &Json,
+    method: &str,
+    params: &Json,
+    version: &str,
+    headers: &HashMap<String, String>,
+) -> (u16, String) {
+    if version != PROTOCOL_VERSION {
+        let data = Json::Obj(vec![
+            (
+                "supported".into(),
+                Json::Arr(vec![Json::str(PROTOCOL_VERSION)]),
+            ),
+            ("requested".into(), Json::str(version)),
+        ]);
+        return (
+            400,
+            error_with_data(id.clone(), -32022, "Unsupported protocol version", data).to_string(),
+        );
     }
+    if params
+        .get("_meta")
+        .and_then(|m| m.get(CAPABILITIES_META))
+        .is_none()
+    {
+        return (
+            400,
+            error(
+                id.clone(),
+                -32602,
+                "Missing client capabilities in params._meta",
+            )
+            .to_string(),
+        );
+    }
+    if let Err(response) = validate_headers(id, method, params, version, headers) {
+        return (400, response);
+    }
+
+    match method {
+        "server/discover" => (
+            200,
+            result(
+                id,
+                modern_fields(Json::Obj(vec![
+                    (
+                        "supportedVersions".into(),
+                        Json::Arr(vec![
+                            Json::str(PROTOCOL_VERSION),
+                            Json::str(LEGACY_PROTOCOL_VERSION),
+                        ]),
+                    ),
+                    (
+                        "capabilities".into(),
+                        Json::Obj(vec![("tools".into(), Json::Obj(vec![]))]),
+                    ),
+                    (
+                        "instructions".into(),
+                        Json::str(
+                            "Run deterministic Simulacra experiments or read research stages.",
+                        ),
+                    ),
+                    ("ttlMs".into(), Json::Num(3_600_000.0)),
+                    ("cacheScope".into(), Json::str("public")),
+                ])),
+            )
+            .to_string(),
+        ),
+        "tools/list" => (
+            200,
+            result(
+                id,
+                modern_fields(Json::Obj(vec![
+                    ("tools".into(), tools(root)),
+                    ("ttlMs".into(), Json::Num(300_000.0)),
+                    ("cacheScope".into(), Json::str("public")),
+                ])),
+            )
+            .to_string(),
+        ),
+        "tools/call" => {
+            let mut response = tools_call(root, id, params);
+            if let Json::Obj(pairs) = &mut response {
+                if let Some((_, res)) = pairs.iter_mut().find(|(key, _)| key == "result") {
+                    *res = modern_fields(res.clone());
+                }
+            }
+            (200, response.to_string())
+        }
+        "" => (
+            200,
+            error(id.clone(), -32600, "Invalid Request").to_string(),
+        ),
+        _ => (
+            404,
+            error(id.clone(), -32601, &format!("Method not found: {method}")).to_string(),
+        ),
+    }
+}
+
+fn modern_fields(body: Json) -> Json {
+    let Json::Obj(mut pairs) = body else {
+        return body;
+    };
+    pairs.insert(0, ("resultType".into(), Json::str("complete")));
+    pairs.push((
+        "_meta".into(),
+        Json::Obj(vec![(
+            SERVER_INFO_META.into(),
+            Json::Obj(vec![
+                ("name".into(), Json::str(SERVER_NAME)),
+                ("version".into(), Json::str(SERVER_VERSION)),
+            ]),
+        )]),
+    ));
+    Json::Obj(pairs)
+}
+
+fn validate_headers(
+    id: &Json,
+    method: &str,
+    params: &Json,
+    version: &str,
+    headers: &HashMap<String, String>,
+) -> Result<(), String> {
+    for (key, expected) in [("mcp-protocol-version", version), ("mcp-method", method)] {
+        if headers.get(key).map(String::as_str) != Some(expected) {
+            return Err(error(
+                id.clone(),
+                -32020,
+                &format!("Header mismatch or missing required header: {key}"),
+            )
+            .to_string());
+        }
+    }
+    if method == "tools/call" {
+        let expected = params.get("name").and_then(Json::as_str).unwrap_or("");
+        if headers.get("mcp-name").map(String::as_str) != Some(expected) {
+            return Err(error(
+                id.clone(),
+                -32020,
+                "Header mismatch or missing required header: mcp-name",
+            )
+            .to_string());
+        }
+    }
+    Ok(())
 }
 
 fn result(id: &Json, res: Json) -> Json {
@@ -70,6 +241,21 @@ fn error(id: Json, code: i64, msg: &str) -> Json {
             Json::Obj(vec![
                 ("code".into(), Json::Num(code as f64)),
                 ("message".into(), Json::str(msg)),
+            ]),
+        ),
+    ])
+}
+
+fn error_with_data(id: Json, code: i64, msg: &str, data: Json) -> Json {
+    Json::Obj(vec![
+        ("jsonrpc".into(), Json::str("2.0")),
+        ("id".into(), id),
+        (
+            "error".into(),
+            Json::Obj(vec![
+                ("code".into(), Json::Num(code as f64)),
+                ("message".into(), Json::str(msg)),
+                ("data".into(), data),
             ]),
         ),
     ])
@@ -356,6 +542,107 @@ mod tests {
         assert_eq!(
             res.get("error").unwrap().get("code").unwrap().as_f64(),
             Some(-32602.0)
+        );
+    }
+
+    fn modern_headers(method: &str, name: Option<&str>) -> HashMap<String, String> {
+        let mut headers = HashMap::from([
+            ("mcp-protocol-version".into(), PROTOCOL_VERSION.into()),
+            ("mcp-method".into(), method.into()),
+        ]);
+        if let Some(name) = name {
+            headers.insert("mcp-name".into(), name.into());
+        }
+        headers
+    }
+
+    fn modern_request(method: &str, extra: &str) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":20,"method":"{method}","params":{{"_meta":{{"{VERSION_META}":"{PROTOCOL_VERSION}","{CAPABILITIES_META}":{{}}}}{extra}}}}}"#
+        )
+    }
+
+    #[test]
+    fn modern_discovery_and_tools_include_cache_metadata() {
+        let body = modern_request("server/discover", "");
+        let (status, response) =
+            handle_http(&root(), &body, &modern_headers("server/discover", None));
+        assert_eq!(status, 200);
+        let res = json::parse(&response).unwrap();
+        assert_eq!(
+            res.path(&["result", "resultType"]).and_then(Json::as_str),
+            Some("complete")
+        );
+        assert!(res.path(&["result", "ttlMs"]).is_some());
+        assert_eq!(
+            res.path(&["result", "cacheScope"]).and_then(Json::as_str),
+            Some("public")
+        );
+        assert_eq!(
+            res.path(&["result", "_meta", SERVER_INFO_META, "name"])
+                .and_then(Json::as_str),
+            Some("simulacra")
+        );
+
+        let body = modern_request("tools/list", "");
+        let (_, response) = handle_http(&root(), &body, &modern_headers("tools/list", None));
+        let res = json::parse(&response).unwrap();
+        assert_eq!(
+            res.path(&["result", "tools"])
+                .and_then(Json::as_arr)
+                .map(<[Json]>::len),
+            Some(6)
+        );
+        assert!(res.path(&["result", "ttlMs"]).is_some());
+    }
+
+    #[test]
+    fn modern_tool_calls_are_complete_results() {
+        let body = modern_request(
+            "tools/call",
+            r#", "name":"run_gossip", "arguments":{"seed":42}"#,
+        );
+        let (status, response) = handle_http(
+            &root(),
+            &body,
+            &modern_headers("tools/call", Some("run_gossip")),
+        );
+        assert_eq!(status, 200);
+        let res = json::parse(&response).unwrap();
+        assert_eq!(
+            res.path(&["result", "resultType"]).and_then(Json::as_str),
+            Some("complete")
+        );
+        assert_eq!(res.path(&["result", "isError"]), Some(&Json::Bool(false)));
+    }
+
+    #[test]
+    fn modern_version_and_header_mismatches_are_rejected() {
+        let body = modern_request("tools/list", "").replace(PROTOCOL_VERSION, "2099-01-01");
+        let (status, response) = handle_http(&root(), &body, &modern_headers("tools/list", None));
+        assert_eq!(status, 400);
+        let res = json::parse(&response).unwrap();
+        assert_eq!(
+            res.path(&["error", "code"]).and_then(Json::as_f64),
+            Some(-32022.0)
+        );
+        assert_eq!(
+            res.path(&["error", "data", "requested"])
+                .and_then(Json::as_str),
+            Some("2099-01-01")
+        );
+
+        let body = modern_request("tools/list", "");
+        let mut headers = modern_headers("tools/list", None);
+        headers.insert("mcp-protocol-version".into(), "2025-06-18".into());
+        let (status, response) = handle_http(&root(), &body, &headers);
+        assert_eq!(status, 400);
+        assert_eq!(
+            json::parse(&response)
+                .unwrap()
+                .path(&["error", "code"])
+                .and_then(Json::as_f64),
+            Some(-32020.0)
         );
     }
 }

@@ -335,8 +335,7 @@ fn render_sitemap(pages: &[Page]) -> String {
         .collect::<Vec<_>>()
         .join("\n  ");
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n  {}\n</urlset>\n",
-        urls
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n  {urls}\n</urlset>\n"
     )
 }
 

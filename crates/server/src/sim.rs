@@ -105,7 +105,7 @@ pub fn run_coevolution(seed: u64) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
-    format!("{{\"seed\":{seed},\"rounds\":[{}]}}", rounds)
+    format!("{{\"seed\":{seed},\"rounds\":[{rounds}]}}")
 }
 
 pub fn run_gossip(seed: u64) -> String {

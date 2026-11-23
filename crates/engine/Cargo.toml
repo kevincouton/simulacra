@@ -8,3 +8,6 @@ description = "Simulation loop driving agents through synthesized environments"
 [dependencies]
 simulacra-agents = { version = "0.1.0", path = "../agents" }
 simulacra-env = { version = "0.1.0", path = "../env" }
+
+[lints]
+workspace = true

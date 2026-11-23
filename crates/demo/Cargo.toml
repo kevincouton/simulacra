@@ -9,3 +9,6 @@ description = "Simulated-town playground demo binary"
 simulacra-agents = { version = "0.1.0", path = "../agents" }
 simulacra-env = { version = "0.1.0", path = "../env" }
 simulacra-engine = { version = "0.1.0", path = "../engine" }
+
+[lints]
+workspace = true

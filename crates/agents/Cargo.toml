@@ -9,3 +9,6 @@ description = "Simulated agent personas behind an LLM provider trait"
 # Real LLM backend via curl. Off by default: the default build is
 # dependency-free and never touches the network.
 llm = []
+
+[lints]
+workspace = true

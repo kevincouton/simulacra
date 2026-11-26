@@ -5,7 +5,9 @@
 A Rust-first project dedicated to the new trend of **synthetic human
 simulation** — the observation that synthetic data, synthetic rubrics, AI
 researchers, and end-to-end RL environments are one thing: increasingly
-ambitious human simulation, 10% worse but 100x cheaper and 10,000x faster.
+ambitious human simulation. The promise is dramatic gains in cost and speed;
+the fidelity penalty is not a universal constant and must be measured for each
+population and decision.
 
 ## Parts
 

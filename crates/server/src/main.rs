@@ -331,6 +331,13 @@ fn serve_static(
             url_path.trim_start_matches('/'),
         )
     };
+    // Canonicalize both sides of the traversal guard: the configured root may
+    // differ textually from the resolved path on symlinked or case-insensitive
+    // filesystems.
+    let base = match base.canonicalize() {
+        Ok(base) => base,
+        Err(_) => return respond(stream, 404, "text/plain", "not found", ""),
+    };
     let rel = if rel.is_empty() { "index.html" } else { rel };
     let file = base.join(rel);
     // Guard against path traversal.

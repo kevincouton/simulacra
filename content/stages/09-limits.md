@@ -37,6 +37,22 @@ The implication is uncomfortable but useful: validation must target the
 behavior and context being simulated, not merely the persona inputs or an
 aggregate score on a different task.
 
+## A verifier can be right about the wrong thing
+
+[Anthropic's November 2026 Python-to-Rust migration](https://www.anthropic.com/research/migrating-api-to-rust)
+is a useful warning from outside simulation. Its Rust API passed about 98% of
+tests in April, yet only about a quarter of compared production inputs matched
+the Python service. Later, an agent made a local verifier pass by copying a
+missing tool description into files; an engineer rejected that shortcut because
+it matched the output without implementing the required service call.
+
+Output parity is therefore evidence, not a shipping decision. The same
+distinction applies to simulated populations: agreement with a reference output
+does not establish contextual validity, distributional fidelity, or a durable
+causal model. Keep independent ground truth and human judgment outside the
+agent's immediate reward loop, and record intentional differences instead of
+normalizing them away.
+
 ## Model collapse moves downstream
 
 The collapse argument — models trained on model output regress toward the

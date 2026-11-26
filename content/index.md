@@ -23,8 +23,9 @@ model. The remaining human roles narrow as the loop closes on itself.
 *Updated November 2026: CrossEnv connects executable environments into
 verifiable cross-environment tasks; new panel evidence compares behavioral
 histories with description-only personas; and the limits page now covers
-context-specific behavior and graded cognitive diversity. The playground
-retains its deterministic, offline-by-default Rust implementation.*
+context-specific behavior, graded cognitive diversity, and why output-matching
+verifiers still need independent ground truth and human judgment. The
+playground retains its deterministic, offline-by-default Rust implementation.*
 
 This tracker ships with **Simulacra**, a Rust workspace that prototypes the
 pipeline: synthesized environments, synthesized binary verifiers with

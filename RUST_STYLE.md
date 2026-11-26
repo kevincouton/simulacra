@@ -29,3 +29,25 @@ Deliberately skipped (nightly-only, unavailable on our stable toolchain):
 - Current explicit allows: `clippy::single_element_loop` (extensible pages list in
   `crates/tracker`), `clippy::inherent_to_string` (deliberate `Json::to_string`
   serialization API in `crates/server`).
+
+## Verification for behavior-preserving changes
+
+Compilation and green tests are necessary but do not by themselves prove parity.
+For ports and compatibility work:
+
+- Keep correctness assertions independent of the implementation change; never
+  weaken an existing assertion merely to make a port pass.
+- Run identical seeded inputs through the incumbent and candidate, comparing
+  outputs, errors, and observable side effects. Record intentional differences
+  explicitly instead of normalizing them away.
+- Add a regression test that fails before each parity fix and passes afterward.
+- Treat sandbox agreement as a fast inner check, then validate representative
+  deployed behavior where feasible. Isolate duplicate writes and other side
+  effects before shadowing, and retain a tested rollback path for cutovers.
+- Keep human review responsible for whether a matching result is acceptable and
+  maintainable, not just whether a verifier reports equality.
+
+These precautions reflect failure modes documented in [Anthropic's production
+API migration](https://www.anthropic.com/research/migrating-api-to-rust),
+[GitHub's Copilot runtime port](https://github.blog/ai-and-ml/generative-ai/migrating-the-github-copilot-runtime-to-rust-using-copilot/),
+and [GitHub's Scientist experiment pattern](https://github.blog/developer-skills/application-development/scientist/).
